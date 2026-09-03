@@ -1,0 +1,19 @@
+[Unit]
+Description=Expose Nabu as a tablet to GNOME/Mutter
+Documentation=file:///usr/local/share/doc/nabu-accelerometer/DEVELOPMENT.md
+After=systemd-udevd.service dev-uinput.device
+Before=display-manager.service
+ConditionPathExists=/dev/uinput
+
+[Service]
+Type=simple
+ExecStart=/usr/local/libexec/nabu-tablet-mode
+Restart=on-failure
+RestartSec=1s
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=graphical.target

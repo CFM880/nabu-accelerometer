@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * First AP-side diagnostic of the SSC QUPv3 SE2 used by Android's sensor
+ * bus_instance 2.  This stage intentionally has no SLPI pinctrl and no SPI
+ * child.  The private nabu diagnostic module enables the SCC clocks without
+ * mapping or reading the serial-engine register window.
+ */
+
+#include <dt-bindings/clock/qcom,scc-sm8150-nabu.h>
+
+/ {
+	model = "Xiaomi Pad 5 (nabu) - SSC SPI2 runtime-resource diagnostic";
+};
+
+&soc {
+	scc_nabu: clock-controller@2b10000 {
+		compatible = "qcom,nabu-sm8150-scc";
+		reg = <0 0x02b10000 0 0x30000>;
+		clocks = <&rpmhcc RPMH_CXO_CLK>;
+		clock-names = "bi_tcxo";
+		power-domains = <&rpmhpd SM8150_LCX>;
+		required-opps = <&rpmhpd_opp_low_svs>;
+		#clock-cells = <1>;
+	};
+
+	ssc_spi2_runtime_test: spi-runtime-test@2688000 {
+		compatible = "xiaomi,nabu-ssc-spi-runtime-test";
+		reg = <0 0x02688000 0 0x4000>;
+		clocks = <&scc_nabu SCC_QUPV3_CORE_CLK>,
+			 <&scc_nabu SCC_QUPV3_2XCORE_CLK>,
+			 <&scc_nabu SCC_QUPV3_SE2_CLK>;
+		clock-names = "m-ahb", "s-ahb", "se";
+		assigned-clocks = <&scc_nabu SCC_MAIN_RCG_CLK_SRC>,
+				  <&scc_nabu SCC_QUPV3_SE2_CLK_SRC>;
+		assigned-clock-rates = <19200000>, <19200000>;
+	};
+};

@@ -1,0 +1,138 @@
+diff --git a/drivers/misc/fastrpc.c b/drivers/misc/fastrpc.c
+index 7b7a22c91fe4..34fcac82f91e 100644
+--- a/drivers/misc/fastrpc.c
++++ b/drivers/misc/fastrpc.c
+@@ -5,9 +5,11 @@
+ #include <linux/completion.h>
+ #include <linux/device.h>
+ #include <linux/dma-buf.h>
++#include <linux/dma-map-ops.h>
+ #include <linux/dma-mapping.h>
+ #include <linux/dma-resv.h>
+ #include <linux/idr.h>
++#include <linux/iommu.h>
+ #include <linux/list.h>
+ #include <linux/miscdevice.h>
+ #include <linux/module.h>
+@@ -199,6 +201,9 @@ struct fastrpc_buf {
+ 	void *virt;
+ 	u64 phys;
+ 	u64 size;
++	struct iommu_domain *alias_domain;
++	dma_addr_t alias_iova;
++	size_t alias_size;
+ 	/* Lock for dma buf attachments */
+ 	struct mutex lock;
+ 	struct list_head attachments;
+@@ -281,6 +286,7 @@ struct fastrpc_channel_ctx {
+ 	bool secure;
+ 	bool unsigned_support;
+ 	u64 dma_mask;
++	bool sdsp_iova_workaround;
+ };
+ 
+ struct fastrpc_device {
+@@ -394,11 +400,73 @@ static int fastrpc_map_lookup(struct fastrpc_user *fl, int fd,
+ 
+ static void fastrpc_buf_free(struct fastrpc_buf *buf)
+ {
++	if (buf->alias_domain) {
++		size_t unmapped;
++
++		unmapped = iommu_unmap(buf->alias_domain, buf->alias_iova,
++				      buf->alias_size);
++		if (unmapped != buf->alias_size)
++			dev_warn(buf->dev,
++				 "failed to fully unmap SDSP IOVA alias %pad (%zu/%zu)\n",
++				 &buf->alias_iova, unmapped, buf->alias_size);
++	}
++
+ 	dma_free_coherent(buf->dev, buf->size, buf->virt,
+ 			  FASTRPC_PHYS(buf->phys));
+ 	kfree(buf);
+ }
+ 
++static int fastrpc_buf_map_sdsp_alias(struct fastrpc_buf *buf, int sid)
++{
++	struct iommu_domain *domain;
++	dma_addr_t dma_addr = FASTRPC_PHYS(buf->phys);
++	dma_addr_t alias = dma_addr + ((u64)sid << 32);
++	size_t size = PAGE_ALIGN(buf->size);
++	size_t mapped = 0;
++	unsigned int prot = IOMMU_READ | IOMMU_WRITE;
++	int ret;
++
++	domain = iommu_get_domain_for_dev(buf->dev);
++	if (!domain)
++		return -ENODEV;
++
++	if (dev_is_dma_coherent(buf->dev))
++		prot |= IOMMU_CACHE;
++
++	while (mapped < size) {
++		phys_addr_t phys;
++
++		phys = iommu_iova_to_phys(domain, dma_addr + mapped);
++		if (!phys) {
++			ret = -EFAULT;
++			goto err_unmap;
++		}
++
++		ret = iommu_map(domain, alias + mapped, phys, PAGE_SIZE, prot,
++				GFP_KERNEL);
++		if (ret)
++			goto err_unmap;
++
++		mapped += PAGE_SIZE;
++	}
++
++	buf->alias_domain = domain;
++	buf->alias_iova = alias;
++	buf->alias_size = size;
++	buf->phys = alias;
++
++	dev_dbg(buf->dev, "mapped SDSP IOVA alias %pad -> %pad (%zu bytes)\n",
++		&alias, &dma_addr, size);
++
++	return 0;
++
++err_unmap:
++	if (mapped)
++		iommu_unmap(domain, alias, mapped);
++
++	return ret;
++}
++
+ static int __fastrpc_buf_alloc(struct fastrpc_user *fl, struct device *dev,
+ 			     u64 size, struct fastrpc_buf **obuf)
+ {
+@@ -444,8 +512,17 @@ static int fastrpc_buf_alloc(struct fastrpc_user *fl, struct device *dev,
+ 
+ 	buf = *obuf;
+ 
+-	if (fl->sctx && fl->sctx->sid)
++	if (fl->sctx && fl->sctx->sid && fl->cctx->sdsp_iova_workaround) {
++		ret = fastrpc_buf_map_sdsp_alias(buf, fl->sctx->sid);
++		if (ret) {
++			dev_err(dev, "failed to map SDSP IOVA alias: %d\n", ret);
++			fastrpc_buf_free(buf);
++			*obuf = NULL;
++			return ret;
++		}
++	} else if (fl->sctx && fl->sctx->sid) {
+ 		buf->phys += ((u64)fl->sctx->sid << 32);
++	}
+ 
+ 	return 0;
+ }
+@@ -2363,6 +2440,10 @@ static int fastrpc_rpmsg_probe(struct rpmsg_device *rpdev)
+ 	spin_lock_init(&data->lock);
+ 	idr_init(&data->ctx_idr);
+ 	data->domain_id = domain_id;
++	data->sdsp_iova_workaround = domain_id == SDSP_DOMAIN_ID &&
++					    of_machine_is_compatible("qcom,sm8150");
++	if (data->sdsp_iova_workaround)
++		dev_info(rdev, "enabling SM8150 SDSP high-IOVA workaround\n");
+ 	data->rpdev = rpdev;
+ 
+ 	err = of_platform_populate(rdev->of_node, NULL, NULL, rdev);

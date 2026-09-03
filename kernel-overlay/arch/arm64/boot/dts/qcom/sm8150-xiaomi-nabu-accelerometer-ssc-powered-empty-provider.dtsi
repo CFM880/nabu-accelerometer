@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Instantiate SCC for a powered zero-clock provider diagnostic. The driver
+ * runtime-resumes LCX but registers no clock HW and performs no SCC MMIO.
+ */
+
+/ {
+	model = "Xiaomi Pad 5 (nabu) - SSC powered-empty-provider diagnostic";
+};
+
+&soc {
+	scc_nabu: clock-controller@2b10000 {
+		compatible = "qcom,nabu-sm8150-scc";
+		reg = <0 0x02b10000 0 0x30000>;
+		clocks = <&rpmhcc RPMH_CXO_CLK>;
+		clock-names = "bi_tcxo";
+		power-domains = <&rpmhpd SM8150_LCX>;
+		required-opps = <&rpmhpd_opp_low_svs>;
+		#clock-cells = <1>;
+	};
+};

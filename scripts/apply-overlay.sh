@@ -1,0 +1,85 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+set -eu
+
+expected_base=5181e1358ddd6ea8028e841d928942373e6aebc8
+
+if [ "$#" -ne 1 ]; then
+	echo "usage: $0 /path/to/linux" >&2
+	exit 2
+fi
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+overlay_dir=$(dirname -- "$script_dir")/kernel-overlay
+fastrpc_patch=$(dirname -- "$script_dir")/patches/0001-fastrpc-sm8150-sdsp-high-iova.patch
+kernel_tree=$1
+
+if [ ! -f "$kernel_tree/Makefile" ] ||
+   ! git -C "$kernel_tree" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+	echo "not a Linux Git worktree: $kernel_tree" >&2
+	exit 1
+fi
+
+current=$(git -C "$kernel_tree" rev-parse HEAD)
+if [ "$current" != "$expected_base" ]; then
+	echo "expected base $expected_base, found $current" >&2
+	exit 1
+fi
+
+[ -f "$fastrpc_patch" ] || {
+	echo "missing FastRPC patch: $fastrpc_patch" >&2
+	exit 1
+}
+
+# The tracked FastRPC file is kept as a focused patch so the project does not
+# duplicate the complete upstream source. Accept either a clean base or this
+# exact patch already applied, but never overwrite other local FastRPC work.
+if git -C "$kernel_tree" apply --reverse --check "$fastrpc_patch" >/dev/null 2>&1; then
+	fastrpc_state=already-applied
+elif git -C "$kernel_tree" diff --quiet HEAD -- drivers/misc/fastrpc.c; then
+	git -C "$kernel_tree" apply --check "$fastrpc_patch"
+	git -C "$kernel_tree" apply "$fastrpc_patch"
+	fastrpc_state=applied
+else
+	echo "refusing to overwrite unrelated changes in drivers/misc/fastrpc.c" >&2
+	exit 1
+fi
+
+# Permit unrelated overlays, but never overwrite a target path carrying
+# unknown local changes. Reapplying this overlay is idempotent.
+find "$overlay_dir" -type f -print | sort | while IFS= read -r source; do
+	relative=${source#"$overlay_dir"/}
+	target=$kernel_tree/$relative
+
+	if [ -f "$target" ] && cmp -s "$source" "$target"; then
+		continue
+	fi
+
+	if git -C "$kernel_tree" ls-files --error-unmatch "$relative" >/dev/null 2>&1; then
+		if ! git -C "$kernel_tree" diff --quiet HEAD -- "$relative"; then
+			echo "refusing to overwrite locally changed path: $relative" >&2
+			exit 1
+		fi
+	elif [ -e "$target" ]; then
+		echo "refusing to overwrite untracked path: $relative" >&2
+		exit 1
+	fi
+done
+
+cp -a "$overlay_dir/." "$kernel_tree/"
+
+echo "installed nabu-accelerometer overlay into $kernel_tree"
+echo "FastRPC SM8150 SDSP high-IOVA patch: $fastrpc_state"
+echo "accelerometer DTB target: qcom/sm8150-xiaomi-nabu-accelerometer-slpi-boot-only.dtb"
+echo "active diagnostic: slpi-boot-only (PAS firmware boot, no AP-side SCC/SSC MMIO)"
+echo "safe fallback: ssc-powered-empty-provider (LCX resume, no SCC MMIO)"
+echo "all SCC MMIO profiles are blocked after the first powered read hard-locked"
+echo "all AP QUP0 profiles are retired and blocked"
+echo "config fragment: config/nabu-accelerometer.config"
+if [ -f "$kernel_tree/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu-camera.dtsi" ]; then
+	echo "camera combination is available"
+fi
+if [ -f "$kernel_tree/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu-iris.dtsi" ]; then
+	echo "Iris combination is available"
+fi
+git -C "$kernel_tree" status --short

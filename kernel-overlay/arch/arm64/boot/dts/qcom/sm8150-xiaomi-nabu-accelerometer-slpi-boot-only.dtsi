@@ -1,0 +1,30 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Boot the vendor SLPI image through the upstream PAS remoteproc driver.
+ * This diagnostic deliberately creates no AP-side SCC or SSC QUP device.
+ */
+
+/ {
+	model = "Xiaomi Pad 5 (nabu) - SLPI boot-only diagnostic";
+};
+
+&remoteproc_slpi {
+	firmware-name = "qcom/sm8150/xiaomi/nabu/slpi_nb.mbn";
+	status = "okay";
+
+	glink-edge {
+		fastrpc {
+			compute-cb@1 {
+				dma-coherent;
+			};
+
+			compute-cb@2 {
+				dma-coherent;
+			};
+
+			compute-cb@3 {
+				dma-coherent;
+			};
+		};
+	};
+};

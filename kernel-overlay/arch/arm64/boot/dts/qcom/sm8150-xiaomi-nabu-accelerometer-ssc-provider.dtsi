@@ -1,0 +1,22 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Register the private SM8150 SCC provider without programming or enabling
+ * any SCC clock.  This isolates access to the SCC register window from the
+ * clock-rate and branch-vote operations that stalled the previous test.
+ */
+
+/ {
+	model = "Xiaomi Pad 5 (nabu) - SSC clock-provider diagnostic";
+};
+
+&soc {
+	scc_nabu: clock-controller@2b10000 {
+		compatible = "qcom,nabu-sm8150-scc";
+		reg = <0 0x02b10000 0 0x30000>;
+		clocks = <&rpmhcc RPMH_CXO_CLK>;
+		clock-names = "bi_tcxo";
+		power-domains = <&rpmhpd SM8150_LCX>;
+		required-opps = <&rpmhpd_opp_low_svs>;
+		#clock-cells = <1>;
+	};
+};

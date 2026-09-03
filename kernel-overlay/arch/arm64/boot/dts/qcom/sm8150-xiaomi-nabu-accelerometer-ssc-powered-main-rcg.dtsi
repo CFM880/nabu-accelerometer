@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Instantiate SCC for a powered single-RCG diagnostic. The driver registers
+ * only the main RCG, causing one controlled initial-rate MMIO read.
+ */
+
+/ {
+	model = "Xiaomi Pad 5 (nabu) - SSC powered-main-RCG diagnostic";
+};
+
+&soc {
+	scc_nabu: clock-controller@2b10000 {
+		compatible = "qcom,nabu-sm8150-scc";
+		reg = <0 0x02b10000 0 0x30000>;
+		clocks = <&rpmhcc RPMH_CXO_CLK>;
+		clock-names = "bi_tcxo";
+		power-domains = <&rpmhpd SM8150_LCX>;
+		required-opps = <&rpmhpd_opp_low_svs>;
+		#clock-cells = <1>;
+	};
+};

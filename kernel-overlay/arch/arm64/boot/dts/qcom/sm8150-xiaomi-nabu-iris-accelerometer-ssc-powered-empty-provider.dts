@@ -1,0 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/* Xiaomi Pad 5 (nabu) Iris plus SSC powered empty-provider diagnostic. */
+
+#include "sm8150-xiaomi-nabu.dts"
+#include "sm8150-xiaomi-nabu-iris.dtsi"
+#include "sm8150-xiaomi-nabu-accelerometer-ssc-powered-empty-provider.dtsi"
