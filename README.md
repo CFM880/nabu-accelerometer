@@ -204,7 +204,10 @@ sudo ./scripts/install-hexagonrpcd.sh
 ```
 
 该配置把 daemon 连接到 `/dev/fastrpc-sdsp`，以 sensors-PD 模式运行，并把已有的
-`/lib/firmware/hexagonfs` 作为根目录。它不修改内核、UKI 或 SLPI 固件。需要回滚时：
+`/lib/firmware/hexagonfs` 作为根目录。SLPI remoteproc 报告 `running` 时，
+sensors-PD 尚未稳定可用；该 override 因此在首次 FastRPC attach 前留出 15 秒
+稳定时间，避免 SSC QMI 在整个启动周期内无法注册。它不修改内核、UKI 或
+SLPI 固件。需要回滚时：
 
 ```sh
 sudo ./scripts/remove-hexagonrpcd-nabu-config.sh
