@@ -76,7 +76,8 @@ install -o root -g root -m 0644 "$unit_source" "$unit_target"
 install -o root -g root -m 0644 "$doc_source" "$doc_target"
 
 systemctl daemon-reload
-systemctl enable --now nabu-tablet-mode.service
+systemctl enable nabu-tablet-mode.service
+systemctl restart nabu-tablet-mode.service
 systemctl is-active --quiet nabu-tablet-mode.service
 
 attempt=0

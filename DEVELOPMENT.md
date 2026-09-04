@@ -334,11 +334,12 @@ display manager 之前就固定上报 `SW_TABLET_MODE=ON`；Mutter 收到首次�
 `PanelOrientationManaged` 此时已经是 true，不会发生 false→true 状态转换来解除
 inhibit。结果 SensorProxy 保持 `undefined`，显示沿用启动瞬间的 transform。
 
-最终 helper 因此在创建设备时先上报 `OFF`，监测普通用户（UID >= 1000）的
-`gnome-shell` 进程，连续存在五秒后才上报 `ON`。这样首次方向事件先走完并 inhibit，
-随后 tablet-mode 的 false→true 转换调用 `uninhibit_tracking()`，SSC 数据流转为持续
-模式；GNOME Shell 退出时 helper 回到 `OFF`，覆盖重新登录场景。仍需安装该时序修正
-版并做四方向及再次重启验证。
+最终 helper 因此在创建设备时先上报 `OFF`，监测普通用户的 `gnome-shell` 进程，
+并明确忽略登录界面的 `gnome-shell --mode=gdm`（GDM 在本机使用的动态 UID 也大于
+1000）。真正的用户 Shell 连续存在五秒后才上报 `ON`。这样首次方向事件先走完并
+inhibit，随后 tablet-mode 的 false→true 转换调用 `uninhibit_tracking()`，SSC
+数据流转为持续模式；GNOME Shell 退出时 helper 回到 `OFF`，覆盖重新登录场景。
+仍需安装该时序修正版并做四方向及再次重启验证。
 
 完整 USB 现场保存在构建机：
 

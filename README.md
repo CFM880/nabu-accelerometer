@@ -88,12 +88,28 @@ UKI_STUB=../.nabu-shared-build.mN6hC8/linuxaa64.efi.stub \
 
 测试 UKI 内建 CDC ACM gadget，并把 `ttyGS0` 设为内核控制台。它不会依赖
 userspace ConfigFS，因此 USB 设备控制器就绪后，主机侧会出现 VID:PID
-`0525:a4a7` 的 `/dev/ttyACM*`。
+`0525:a4a7` 的 `/dev/ttyACM*`。cmdline 把 `tty0` 放在最后，使其成为 userspace
+主控制台；未连接 USB 主机时启动不会被 `ttyGS0` 的发送缓冲区阻塞。USB console
+仍会接收内核日志，连接主机不是启动测试 UKI 的前置条件。
 
-测试和生产 UKI 同时使用 `module_blacklist=venus_core,qcom_iris`。目标系统的
+默认测试和生产 UKI 同时使用 `module_blacklist=venus_core,qcom_iris`。目标系统的
 `qcom-iris-autoload.service` 会显式加载模块，单独使用 `modprobe.blacklist` 无法
 阻止它；当前 Iris 开发驱动在 GNOME 登录时被 `v4l_id`/`gst-plugin-scan` 并发打开
 会卡在 `video_cc_mvs0_core_clk`。内核级 blacklist 用于将该问题与传感器验证隔离。
+
+需要同时验证 Camera 和 Iris 时可显式构建高风险测试 profile。Camera DTB/CAMSS 在
+默认测试 UKI 中已经启用；该开关只移除 Iris/Venus blacklist。Iris 曾在桌面登录时
+造成整机硬锁，因此应先运行 USB console 捕获，并保留原默认启动项用于恢复：
+
+```sh
+ENABLE_IRIS=1 UKI_STUB=../.nabu-shared-build.mN6hC8/linuxaa64.efi.stub \
+  ./scripts/build-test-uki.sh \
+  ../linux ../.nabu-shared-build.mN6hC8/out \
+  ../.nabu-shared-build.mN6hC8/nabu-accelerometer-test.efi
+```
+
+安装 Iris-enabled profile 时，`install-test-uki.sh` 要求第五个参数为同一构建的
+`qcom-iris.ko`；默认安全 profile 仍使用原来的四个参数。
 
 ## 安装
 
@@ -162,7 +178,8 @@ status = "okay";
 
 预期出现第四个 remoteproc，名称为 `slpi`、状态为 `running`，内核日志包含
 `remote processor slpi is now up`。本阶段不应出现 `nabu-sm8150-scc` 日志，也不会
-直接访问 SCC/SSC 寄存器。每次启动仍需先运行 `capture-usb-console.sh`。
+直接访问 SCC/SSC 寄存器。需要保留完整诊断日志时，仍应在启动前运行
+`capture-usb-console.sh`；不抓日志时可不连接 USB，系统会继续正常启动。
 
 SLPI 首次真机启动已证明 PAS、GLINK 和 FastRPC 枚举正常，但 `sensor_process`
 每约 40 秒因初始化看门狗崩溃并由 remoteproc 自动恢复。`tqftpserv` 会相对于
@@ -259,9 +276,10 @@ sudo ./scripts/install-tablet-mode.sh ./nabu-tablet-mode
 ```
 
 helper 只通过 uinput 上报 tablet-mode switch，不读取传感器、不直接操作显示器。
-它启动时先保持 `OFF`，检测到普通用户的 GNOME Shell 后等待五秒再切换为 `ON`；
-这样 Mutter 会先完成原生竖屏面板的首次方向处理，再进入持续自动旋转状态。用户
-GNOME Shell 退出时 helper 会回到 `OFF`，所以重新登录也保持相同顺序。
+它启动时先保持 `OFF`，忽略登录界面的 `gnome-shell --mode=gdm`，检测到普通用户的
+GNOME Shell 后等待五秒再切换为 `ON`；这样 Mutter 会先完成原生竖屏面板的首次方向
+处理，再进入持续自动旋转状态。用户 GNOME Shell 退出时 helper 会回到 `OFF`，所以
+重新登录也保持相同顺序。
 GNOME/Mutter 仍负责自动旋转。需要回到硬件推断模式时：
 
 ```sh

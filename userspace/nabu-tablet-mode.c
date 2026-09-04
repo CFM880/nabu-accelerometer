@@ -68,10 +68,13 @@ static bool graphical_user_shell_running(void)
 
 	while ((entry = readdir(proc))) {
 		char path[64];
+		char cmdline[256];
 		char comm[32];
 		struct stat statbuf;
+		ssize_t cmdline_length;
 		ssize_t length;
 		int comm_fd;
+		int cmdline_fd;
 		char *end;
 		long pid;
 
@@ -93,11 +96,31 @@ static bool graphical_user_shell_running(void)
 		if (length <= 0)
 			continue;
 		comm[length] = '\0';
-		if (strcmp(comm, "gnome-shell\n") == 0 ||
-		    strcmp(comm, "gnome-shell") == 0) {
-			found = true;
-			break;
+		if (strcmp(comm, "gnome-shell\n") != 0 &&
+		    strcmp(comm, "gnome-shell") != 0)
+			continue;
+
+		/*
+		 * GDM also runs gnome-shell, commonly under a dynamically allocated
+		 * UID above 1000.  Do not treat the greeter as the user's shell: if
+		 * tablet mode is enabled before the real session starts, the new
+		 * Mutter instance can inhibit orientation tracking during its native
+		 * portrait initialization and never receive a later OFF -> ON edge.
+		 */
+		(void)snprintf(path, sizeof(path), "/proc/%ld/cmdline", pid);
+		cmdline_fd = open(path, O_RDONLY | O_CLOEXEC);
+		if (cmdline_fd >= 0) {
+			cmdline_length = read(cmdline_fd, cmdline,
+					      sizeof(cmdline));
+			close(cmdline_fd);
+			if (cmdline_length > 0 &&
+			    memmem(cmdline, (size_t)cmdline_length,
+				   "--mode=gdm", strlen("--mode=gdm")))
+				continue;
 		}
+
+		found = true;
+		break;
 	}
 
 	closedir(proc);

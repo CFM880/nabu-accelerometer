@@ -13,6 +13,22 @@ destination=$3
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 project_dir=$(dirname -- "$script_dir")
 dts_dir=$kernel_tree/arch/arm64/boot/dts/qcom
+enable_iris=${ENABLE_IRIS:-0}
+
+case $enable_iris in
+	0)
+		cmdline=$project_dir/config/slpi-boot-only.cmdline
+		profile='Iris-blocked'
+		;;
+	1)
+		cmdline=$project_dir/config/slpi-boot-only-iris-enabled.cmdline
+		profile='Iris-enabled'
+		;;
+	*)
+		echo "ENABLE_IRIS must be 0 or 1" >&2
+		exit 2
+		;;
+esac
 
 dtb=sm8150-xiaomi-nabu-accelerometer-slpi-boot-only.dtb
 if [ -f "$dts_dir/sm8150-xiaomi-nabu-camera.dtsi" ]; then
@@ -42,7 +58,7 @@ rm -f -- "$temporary"
 set -- build \
 	--linux "$image" \
 	--devicetree "$devicetree" \
-	--cmdline "@$project_dir/config/slpi-boot-only.cmdline" \
+	--cmdline "@$cmdline" \
 	--os-release @/etc/os-release \
 	--uname "$kernel_release" \
 	--sbat "@$project_dir/config/uki.sbat" \
@@ -58,5 +74,5 @@ set -- "$@" --output "$temporary"
 "$ukify_python" "$ukify" "$@"
 mv -f -- "$temporary" "$destination"
 
-echo "built fixed SLPI boot-only diagnostic UKI: $destination"
+echo "built fixed SLPI boot-only diagnostic UKI ($profile): $destination"
 sha256sum "$destination"

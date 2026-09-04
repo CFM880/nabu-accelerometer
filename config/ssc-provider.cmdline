@@ -1,1 +1,1 @@
-root=PARTLABEL=linux rw fw_devlink=permissive modprobe.blacklist=venus_core,qcom_iris module_blacklist=venus_core,qcom_iris console=tty0 console=ttyGS0 loglevel=8 ignore_loglevel no_console_suspend
+root=PARTLABEL=linux rw fw_devlink=permissive modprobe.blacklist=venus_core,qcom_iris module_blacklist=venus_core,qcom_iris console=ttyGS0 console=tty0 loglevel=8 ignore_loglevel no_console_suspend
