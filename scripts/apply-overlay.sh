@@ -66,7 +66,9 @@ find "$overlay_dir" -type f -print | sort | while IFS= read -r source; do
 	fi
 done
 
-cp -a "$overlay_dir/." "$kernel_tree/"
+# Give installed sources fresh timestamps so an incremental O= build cannot
+# reuse objects produced from an older revision of the overlay.
+cp -R "$overlay_dir/." "$kernel_tree/"
 
 echo "installed nabu-accelerometer overlay into $kernel_tree"
 echo "FastRPC SM8150 SDSP high-IOVA patch: $fastrpc_state"
