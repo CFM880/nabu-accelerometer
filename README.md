@@ -25,24 +25,19 @@ Camera，并通过 cmdline 屏蔽 `venus_core` 和 `qcom_iris`。
 Camera/Iris 组合源码。
 
 ```sh
-./scripts/apply-overlay.sh ../linux
-
-./scripts/build.sh \
-  ../linux \
-  ../.nabu-shared-build.mN6hC8/out
-
 UKI_STUB=../.nabu-shared-build.mN6hC8/linuxaa64.efi.stub \
-  ./scripts/build-production-uki.sh \
+  ./scripts/build.sh \
   ../linux \
   ../.nabu-shared-build.mN6hC8/out \
-  ../.nabu-shared-build.mN6hC8/nabu-accelerometer-production.efi
+  ../artifacts
 ```
 
 最终构建产物只有：
 
 - `nabu-accelerometer-production.efi`；
-- `drivers/misc/fastrpc.ko`；
-- `drivers/soc/qcom/qcom_pd_mapper.ko`。
+- `fastrpc.ko`；
+- `qcom_pd_mapper.ko`；
+- `nabu-tablet-mode`。
 
 当前已验证生产 UKI：
 
@@ -58,42 +53,37 @@ SHA256: b0b5078230aa2495d332ecf2ded65f44c46c6ead8fdaf1bea3804417c79ac398
 /dev/sda31:/EFI/ubuntu/6.14.11-nabu-iris-camera1+-build1.efi
 ```
 
-将三个产物放进项目的 `artifacts/` 后，可以使用无参数统一命令：
+将产物放进项目的 `artifacts/` 后，使用统一命令：
 
 ```sh
-sudo bash scripts/install-production-system.sh
+sudo bash scripts/install.sh
 ```
 
 也可以显式指定：
 
 ```sh
-sudo bash scripts/install-production-system.sh \
-  /path/to/nabu-accelerometer-production.efi \
-  /path/to/fastrpc.ko \
-  /path/to/qcom_pd_mapper.ko
+sudo bash scripts/install.sh /path/to/artifacts
 ```
 
 安装器会校验 UKI SHA256、模块名称和 vermagic，备份原默认 UKI，再原子替换第 31
 分区中的默认文件。安装完成后重启。
 
-首次部署还需要安装 SLPI 文件系统、libssc、SSC 版 iio-sensor-proxy 和
-tablet-mode helper：
+首次部署时，把下面两个固定版本源码包也放进 `artifacts/`：
 
-```sh
-sudo bash scripts/install-slpi-filesystem.sh
-sudo bash scripts/install-libssc.sh ./libssc-v0.4.4.tar.gz
-sudo bash scripts/install-iio-sensor-proxy-ssc.sh ./iio-sensor-proxy-3.9.tar.gz
-
-./scripts/build-tablet-mode.sh ./nabu-tablet-mode
-sudo bash scripts/install-tablet-mode.sh ./nabu-tablet-mode
+```text
+libssc-v0.4.4.tar.gz
+iio-sensor-proxy-3.9.tar.gz
 ```
+
+`install.sh` 会统一处理第 31 分区、内核模块、SLPI 文件系统、hexagonrpcd、libssc、
+iio-sensor-proxy 和 tablet-mode helper。已正确安装的 userspace 组件不会要求重复提供
+源码包。
 
 ## 验证
 
 ```sh
-./scripts/test-libssc-accelerometer.sh 20
-./scripts/test-iio-sensor-proxy-ssc.sh 20
-sudo bash scripts/inspect-default-uki.sh
+sudo bash scripts/verify.sh
+sudo bash scripts/verify.sh 20   # 额外采样 20 秒
 ```
 
 最终真机启动应满足：
@@ -106,11 +96,9 @@ sudo bash scripts/inspect-default-uki.sh
 ## 回滚
 
 ```sh
-sudo bash scripts/restore-production-uki.sh
-sudo bash scripts/remove-tablet-mode.sh
-sudo bash scripts/remove-iio-sensor-proxy-ssc.sh
-sudo bash scripts/remove-hexagonrpcd-nabu-config.sh
-sudo bash scripts/remove-slpi-filesystem.sh
+sudo bash scripts/restore.sh kernel
+sudo bash scripts/restore.sh all
 ```
 
-回滚脚本只删除本项目识别的文件；SLPI registry/calibration 数据会保留。
+`kernel` 只恢复原 UKI；`all` 同时移除 userspace 集成。SLPI registry/calibration
+数据始终保留。`libexec/` 中的文件是内部实现，不是用户入口。
