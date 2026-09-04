@@ -7,23 +7,37 @@ expected_uki=nabu-accelerometer-test.efi
 expected_ssc_module=nabu-sm8150-ssc.ko
 expected_spi_module=spi-geni-qcom.ko
 expected_fastrpc_module=fastrpc.ko
+expected_pdm_module=qcom_pd_mapper.ko
 expected_iris_module=qcom-iris.ko
 esp_device=/dev/disk/by-partlabel/esp
 esp_mount=/boot/efi
 ssc_module_target=/lib/modules/$kernel_release/extra/$expected_ssc_module
 spi_module_target=/lib/modules/$kernel_release/kernel/drivers/spi/$expected_spi_module
 fastrpc_module_target=/lib/modules/$kernel_release/kernel/drivers/misc/$expected_fastrpc_module
+pdm_module_target=/lib/modules/$kernel_release/kernel/drivers/soc/qcom/$expected_pdm_module
 iris_module_target=/lib/modules/$kernel_release/kernel/drivers/media/platform/qcom/iris/$expected_iris_module
 mounted_here=false
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+project_dir=$(dirname -- "$script_dir")
 
 usage()
 {
-	echo "usage: sudo $0 /path/to/$expected_uki /path/to/$expected_ssc_module /path/to/$expected_spi_module /path/to/$expected_fastrpc_module [/path/to/$expected_iris_module]" >&2
+	echo "usage: sudo $0 /path/to/$expected_uki /path/to/$expected_ssc_module /path/to/$expected_spi_module /path/to/$expected_fastrpc_module /path/to/$expected_pdm_module [/path/to/$expected_iris_module]" >&2
 	exit 2
 }
 
+if [ "$#" -eq 0 ] && [ -d "$project_dir/artifacts" ]; then
+	set -- \
+		"$project_dir/artifacts/nabu-accelerometer-test.efi" \
+		"$project_dir/artifacts/nabu-sm8150-ssc.ko" \
+		"$project_dir/artifacts/spi-geni-qcom.ko" \
+		"$project_dir/artifacts/fastrpc.ko" \
+		"$project_dir/artifacts/qcom_pd_mapper.ko" \
+		"$project_dir/artifacts/qcom-iris.ko"
+fi
+
 case $# in
-	4 | 5) ;;
+	5 | 6) ;;
 	*) usage ;;
 esac
 argument_count=$#
@@ -36,9 +50,10 @@ source_uki=$(realpath -- "$1")
 source_ssc_module=$(realpath -- "$2")
 source_spi_module=$(realpath -- "$3")
 source_fastrpc_module=$(realpath -- "$4")
+source_pdm_module=$(realpath -- "$5")
 source_iris_module=
-if [ "$argument_count" -eq 5 ]; then
-	source_iris_module=$(realpath -- "$5")
+if [ "$argument_count" -eq 6 ]; then
+	source_iris_module=$(realpath -- "$6")
 fi
 [ -s "$source_uki" ] || {
 	echo "missing test UKI: $source_uki" >&2
@@ -54,6 +69,10 @@ fi
 }
 [ -s "$source_fastrpc_module" ] || {
 	echo "missing FastRPC module: $source_fastrpc_module" >&2
+	exit 1
+}
+[ -s "$source_pdm_module" ] || {
+	echo "missing PD mapper module: $source_pdm_module" >&2
 	exit 1
 }
 if [ -n "$source_iris_module" ]; then
@@ -78,6 +97,10 @@ fi
 	echo "unexpected FastRPC module name: $(basename -- "$source_fastrpc_module")" >&2
 	exit 1
 }
+[ "$(basename -- "$source_pdm_module")" = "$expected_pdm_module" ] || {
+	echo "unexpected PD mapper module name: $(basename -- "$source_pdm_module")" >&2
+	exit 1
+}
 if [ -n "$source_iris_module" ] &&
    [ "$(basename -- "$source_iris_module")" != "$expected_iris_module" ]; then
 	echo "unexpected Iris module name: $(basename -- "$source_iris_module")" >&2
@@ -95,7 +118,7 @@ strings "$source_uki" | grep -Fq \
 if strings "$source_uki" | grep -Fq \
 	'module_blacklist=venus_core,qcom_iris'; then
 	profile=iris-blocked
-	[ "$argument_count" -eq 4 ] || {
+	[ "$argument_count" -eq 5 ] || {
 		echo "safe Iris-blocked UKI must not be installed with an Iris module argument" >&2
 		exit 1
 	}
@@ -104,7 +127,7 @@ elif strings "$source_uki" | grep -Fq \
      ! strings "$source_uki" | grep -Eq \
 	'(modprobe|module)_blacklist=.*(qcom_iris|venus_core)'; then
 	profile=iris-enabled
-	[ "$argument_count" -eq 5 ] || {
+	[ "$argument_count" -eq 6 ] || {
 		echo "Iris-enabled UKI requires the matching $expected_iris_module argument" >&2
 		exit 1
 	}
@@ -132,12 +155,16 @@ fi
 	echo "source is not the FastRPC module" >&2
 	exit 1
 }
+[ "$(modinfo -F name "$source_pdm_module")" = qcom_pd_mapper ] || {
+	echo "source is not the Qualcomm PD mapper module" >&2
+	exit 1
+}
 if [ "$profile" = iris-enabled ] &&
    [ "$(modinfo -F name "$source_iris_module")" != qcom_iris ]; then
 	echo "source is not the Qualcomm Iris module" >&2
 	exit 1
 fi
-for source_module in "$source_ssc_module" "$source_spi_module" "$source_fastrpc_module"; do
+for source_module in "$source_ssc_module" "$source_spi_module" "$source_fastrpc_module" "$source_pdm_module"; do
 	module_vermagic=$(modinfo -F vermagic "$source_module")
 	case "$module_vermagic" in
 		"$kernel_release "*) ;;
@@ -171,12 +198,21 @@ strings "$source_fastrpc_module" | grep -Fq \
 	echo "FastRPC module does not contain the SM8150 SDSP IOVA workaround" >&2
 	exit 1
 }
+strings "$source_fastrpc_module" | grep -Fq \
+	'tracking protection domain %s for %s' || {
+	echo "FastRPC module does not contain SLPI attach-PD PDR gating" >&2
+	exit 1
+}
 [ -f "$spi_module_target" ] || {
 	echo "missing installed SPI module: $spi_module_target" >&2
 	exit 1
 }
 [ -f "$fastrpc_module_target" ] || {
 	echo "missing installed FastRPC module: $fastrpc_module_target" >&2
+	exit 1
+}
+[ -f "$pdm_module_target" ] || {
+	echo "missing installed PD mapper module: $pdm_module_target" >&2
 	exit 1
 }
 [ -b "$esp_device" ] || {
@@ -235,6 +271,7 @@ install -d -m 0755 -- "$(dirname -- "$ssc_module_target")"
 install -m 0644 -- "$source_ssc_module" "$ssc_module_target"
 install -m 0644 -- "$source_spi_module" "$spi_module_target"
 install -m 0644 -- "$source_fastrpc_module" "$fastrpc_module_target"
+install -m 0644 -- "$source_pdm_module" "$pdm_module_target"
 if [ "$profile" = iris-enabled ]; then
 	install -d -m 0755 -- "$(dirname -- "$iris_module_target")"
 	install -m 0644 -- "$source_iris_module" "$iris_module_target"
@@ -250,14 +287,19 @@ installed_spi_hash=$(sha256sum "$spi_module_target" | cut -d ' ' -f 1)
 source_fastrpc_hash=$(sha256sum "$source_fastrpc_module" | cut -d ' ' -f 1)
 installed_fastrpc_hash=$(sha256sum "$fastrpc_module_target" | cut -d ' ' -f 1)
 [ "$source_fastrpc_hash" = "$installed_fastrpc_hash" ] || exit 1
+source_pdm_hash=$(sha256sum "$source_pdm_module" | cut -d ' ' -f 1)
+installed_pdm_hash=$(sha256sum "$pdm_module_target" | cut -d ' ' -f 1)
+[ "$source_pdm_hash" = "$installed_pdm_hash" ] || exit 1
 if [ "$profile" = iris-enabled ]; then
 	source_iris_hash=$(sha256sum "$source_iris_module" | cut -d ' ' -f 1)
 	installed_iris_hash=$(sha256sum "$iris_module_target" | cut -d ' ' -f 1)
 	[ "$source_iris_hash" = "$installed_iris_hash" ] || exit 1
 	sync "$ssc_module_target" "$spi_module_target" "$fastrpc_module_target" \
+		"$pdm_module_target" \
 		"$iris_module_target"
 else
-	sync "$ssc_module_target" "$spi_module_target" "$fastrpc_module_target"
+	sync "$ssc_module_target" "$spi_module_target" "$fastrpc_module_target" \
+		"$pdm_module_target"
 fi
 
 for old_uki in "$destination_dir"/*-accelerometer-*.efi; do
@@ -276,6 +318,8 @@ echo "restored unmodified upstream SPI module: $spi_module_target"
 echo "SPI module SHA256: $installed_spi_hash"
 echo "installed SM8150 SDSP IOVA FastRPC module: $fastrpc_module_target"
 echo "FastRPC module SHA256: $installed_fastrpc_hash"
+echo "installed SM8150 SLPI-aware PD mapper module: $pdm_module_target"
+echo "PD mapper module SHA256: $installed_pdm_hash"
 if [ "$profile" = iris-enabled ]; then
 	echo "installed Qualcomm Iris module: $iris_module_target"
 	echo "Iris module SHA256: $installed_iris_hash"

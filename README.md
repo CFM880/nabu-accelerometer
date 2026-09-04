@@ -108,35 +108,49 @@ ENABLE_IRIS=1 UKI_STUB=../.nabu-shared-build.mN6hC8/linuxaa64.efi.stub \
   ../.nabu-shared-build.mN6hC8/nabu-accelerometer-test.efi
 ```
 
-安装 Iris-enabled profile 时，`install-test-uki.sh` 要求第五个参数为同一构建的
-`qcom-iris.ko`；默认安全 profile 仍使用原来的四个参数。
+安装 Iris-enabled profile 时，`install-test-uki.sh` 要求第六个参数为同一构建的
+`qcom-iris.ko`；第五个参数始终是带 Nabu SLPI 映射的 `qcom_pd_mapper.ko`。
 
 ## 安装
 
 安装脚本原子替换同一个测试 UKI，同时保留安全的私有 SSC fallback 模块，并确保
 `spi-geni-qcom.ko` 是当前源码编出的未修改版本、`fastrpc.ko` 带有 SM8150 SDSP
-高 IOVA 修复。SLPI DTB 没有 SCC compatible，所以私有模块不会绑定：
+高 IOVA 修复和 SLPI root-PD PDR 启动门控。SLPI DTB 没有 SCC compatible，所以私有模块不会绑定：
 
 ```sh
 sudo ./scripts/install-test-uki.sh \
   ../.nabu-shared-build.mN6hC8/nabu-accelerometer-test.efi \
   ../.nabu-shared-build.mN6hC8/out/nabu-accelerometer-driver/nabu-sm8150-ssc.ko \
   ../.nabu-shared-build.mN6hC8/out/drivers/spi/spi-geni-qcom.ko \
-  ../.nabu-shared-build.mN6hC8/out/drivers/misc/fastrpc.ko
+  ../.nabu-shared-build.mN6hC8/out/drivers/misc/fastrpc.ko \
+  ../.nabu-shared-build.mN6hC8/out/drivers/soc/qcom/qcom_pd_mapper.ko
 ```
 
 默认 UKI 不会修改。测试项仍固定为 `nabu-accelerometer-test.efi`，不会增加编号版本。
 
 完成稳定性、原始采样、桌面方向和冷启动验证后，可把生产 UKI 原子替换到现有默认
-路径。脚本只接受已知原默认 UKI 的 SHA256，并先在 `/var/lib/nabu-accelerometer`
-保存可恢复备份：
+路径。Nabu 的 `/dev/disk/by-partlabel/esp` 解析为第 31 分区 `/dev/sda31`，默认 UKI
+位于其中的 `EFI/ubuntu/6.14.11-nabu-iris-camera1+-build1.efi`。脚本只接受已知原默认
+UKI 的 SHA256，并先在 `/var/lib/nabu-accelerometer` 保存可恢复备份：
 
 ```sh
 sudo ./scripts/install-production-uki.sh \
   ../.nabu-shared-build.mN6hC8/nabu-accelerometer-production.efi \
   ../.nabu-shared-build.mN6hC8/out/nabu-accelerometer-driver/nabu-sm8150-ssc.ko \
   ../.nabu-shared-build.mN6hC8/out/drivers/spi/spi-geni-qcom.ko \
-  ../.nabu-shared-build.mN6hC8/out/drivers/misc/fastrpc.ko
+  ../.nabu-shared-build.mN6hC8/out/drivers/misc/fastrpc.ko \
+  ../.nabu-shared-build.mN6hC8/out/drivers/soc/qcom/qcom_pd_mapper.ko
+```
+
+也可以使用统一安装入口，同时更新生产 UKI、模块和 `hexagonrpcd` 的事件驱动配置：
+
+```sh
+sudo ./scripts/install-production-system.sh \
+  ../.nabu-shared-build.mN6hC8/nabu-accelerometer-production.efi \
+  ../.nabu-shared-build.mN6hC8/out/nabu-accelerometer-driver/nabu-sm8150-ssc.ko \
+  ../.nabu-shared-build.mN6hC8/out/drivers/spi/spi-geni-qcom.ko \
+  ../.nabu-shared-build.mN6hC8/out/drivers/misc/fastrpc.ko \
+  ../.nabu-shared-build.mN6hC8/out/drivers/soc/qcom/qcom_pd_mapper.ko
 ```
 
 如需恢复原默认 UKI：

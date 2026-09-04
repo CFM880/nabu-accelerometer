@@ -31,8 +31,8 @@ fi
 	exit 1
 }
 
-# The tracked FastRPC file is kept as a focused patch so the project does not
-# duplicate the complete upstream source. Accept either a clean base or this
+# The tracked FastRPC changes are kept as a focused patch so the project does
+# not duplicate complete upstream sources. Accept either a clean base or this
 # exact patch already applied, but never overwrite other local FastRPC work.
 if git -C "$kernel_tree" apply --reverse --check "$fastrpc_patch" >/dev/null 2>&1; then
 	fastrpc_state=already-applied
@@ -71,7 +71,7 @@ done
 cp -R "$overlay_dir/." "$kernel_tree/"
 
 echo "installed nabu-accelerometer overlay into $kernel_tree"
-echo "FastRPC SM8150 SDSP high-IOVA patch: $fastrpc_state"
+echo "FastRPC SM8150 SDSP IOVA/PDR patch: $fastrpc_state"
 echo "accelerometer DTB target: qcom/sm8150-xiaomi-nabu-accelerometer-slpi-boot-only.dtb"
 echo "active diagnostic: slpi-boot-only (PAS firmware boot, no AP-side SCC/SSC MMIO)"
 echo "safe fallback: ssc-powered-empty-provider (LCX resume, no SCC MMIO)"

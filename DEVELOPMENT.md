@@ -132,6 +132,23 @@ DT 同时给 SLPI 的三个 FastRPC compute context bank 添加 `dma-coherent`�
 enabling SM8150 SDSP high-IOVA workaround
 ```
 
+同一补丁还为 SM8150 PD mapper 补充 `msm/slpi/root_pd` 和
+`msm/slpi/sensor_pd`，并通过 `qcom,protection-domain = "tms/servreg",
+"msm/slpi/root_pd"` 注册 SLPI 根域 PDR 状态通知。`hexagonrpcd` 可以立即启动；内核只在
+`FASTRPC_IOCTL_INIT_ATTACH_SNS` 到达而 root-PD 尚未报告 `UP` 时睡眠，并在通知
+到达后立即继续。15 秒只作为失败超时，不再是每次启动的固定延迟。确认标记为：
+
+```text
+tracking protection domain msm/slpi/root_pd for tms/servreg
+protection domain msm/slpi/root_pd is up
+```
+
+PDR 门控验证启动的 boot ID 为
+`12d48bc9-352f-44fa-b153-e290c8c3d882`：SLPI 在 5.771 秒上线，FastRPC 在
+6.501 秒开始跟踪 root PD，6.517 秒收到 `UP`，早于 `hexagonrpcd` 的 7.569 秒启动。
+因此正常启动没有产生等待；Iris、Camera、`pd-mapper` 和加速度计同时运行，相关服务
+的 `NRestarts` 均为 0。
+
 修复后第一次启动的 boot ID 为
 `e0355edf-dcae-41c4-9906-958f20cb7344`。SLPI 与 `hexagonrpcd` 连续稳定超过 20
 分钟，以下错误计数保持为 0：
@@ -371,12 +388,19 @@ inhibit，随后 tablet-mode 的 false→true 转换调用 `uninhibit_tracking()
 
 ```text
 nabu-accelerometer-production.efi
-SHA256: 04b6a1418e1f503969786ff32536119081e87b624fb5125cb86e452b84a7dbf0
+SHA256: b0b5078230aa2495d332ecf2ded65f44c46c6ead8fdaf1bea3804417c79ac398
 ```
 
 重新提取校验表明其中 `.linux` section 与已验证 Image 的 SHA256
-`c641ef8f...` 完全相同，`.dtb` section 与已验证 SLPI DTB 的 SHA256
-`5eb25653...` 完全相同。
+`2fef6dfc34df7f96c4e8a63fc18a2b97f649aba85f78948fb3033d2a478c8682`
+完全相同，`.dtb` section 与已验证 SLPI DTB 的 SHA256
+`4efd2f9a316bb81e2e054d72bcfec9d6cd48fe2a8dd4ba5511c07c0c5e239b25`
+完全相同。
+
+从 ESP 第 31 分区的默认路径启动后，生产验证 boot ID 为
+`1c830a89-178d-4dee-a258-552cd81a8d83`。SLPI 在 5.553 秒上线，root PD 在
+6.189 秒报告 `UP`；`hexagonrpcd` 和 `iio-sensor-proxy` 均一次启动成功，Iris/Venus
+黑名单生效，SLPI crash、watchdog、attach timeout 和 IOMMU fault 计数均为 0。
 
 替换前，原 UKI 会备份到：
 
@@ -387,7 +411,7 @@ SHA256: 04b6a1418e1f503969786ff32536119081e87b624fb5125cb86e452b84a7dbf0
 `restore-production-uki.sh` 只接受该校验通过的备份，并拒绝覆盖未知 UKI。测试入口
 `nabu-accelerometer-test.efi` 始终保留，可用于恢复或继续抓取 USB 日志。
 
-## 11. 关键文件
+## 12. 关键文件
 
 - `patches/0001-fastrpc-sm8150-sdsp-high-iova.patch`：FastRPC 根因修复；
 - `kernel-overlay/.../sm8150-xiaomi-nabu-accelerometer-slpi-boot-only.dtsi`：SLPI

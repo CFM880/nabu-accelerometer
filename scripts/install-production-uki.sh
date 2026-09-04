@@ -4,12 +4,16 @@ set -eu
 
 kernel_release=6.14.11-nabu-iris-camera1+
 expected_uki=nabu-accelerometer-production.efi
-expected_production_sha256=04b6a1418e1f503969786ff32536119081e87b624fb5125cb86e452b84a7dbf0
+expected_production_sha256=b0b5078230aa2495d332ecf2ded65f44c46c6ead8fdaf1bea3804417c79ac398
+previous_production_sha256=415c396d48c085a92f8d7c79eca6b9792e3dd505b30f93d4915db001ff98ba67
+older_production_sha256=04b6a1418e1f503969786ff32536119081e87b624fb5125cb86e452b84a7dbf0
 default_uki=6.14.11-nabu-iris-camera1+-build1.efi
 original_default_sha256=873994f0af8d42f9cc65752b4381e77b2e153cd6bb8455d08bafcd8b05082491
+alternate_original_backup_sha256=19b2b48ca4bbe6d21064083d0ea8b2a3ec28edc02ee3d5c73c0cc90c3de04a07
 expected_ssc_module=nabu-sm8150-ssc.ko
 expected_spi_module=spi-geni-qcom.ko
 expected_fastrpc_module=fastrpc.ko
+expected_pdm_module=qcom_pd_mapper.ko
 esp_device=/dev/disk/by-partlabel/esp
 esp_mount=/boot/efi
 backup_dir=/var/lib/nabu-accelerometer
@@ -17,15 +21,16 @@ backup_uki=$backup_dir/$default_uki.pre-accelerometer
 ssc_module_target=/lib/modules/$kernel_release/extra/$expected_ssc_module
 spi_module_target=/lib/modules/$kernel_release/kernel/drivers/spi/$expected_spi_module
 fastrpc_module_target=/lib/modules/$kernel_release/kernel/drivers/misc/$expected_fastrpc_module
+pdm_module_target=/lib/modules/$kernel_release/kernel/drivers/soc/qcom/$expected_pdm_module
 mounted_here=false
 
 usage()
 {
-	echo "usage: sudo $0 /path/to/$expected_uki /path/to/$expected_ssc_module /path/to/$expected_spi_module /path/to/$expected_fastrpc_module" >&2
+	echo "usage: sudo $0 /path/to/$expected_uki /path/to/$expected_ssc_module /path/to/$expected_spi_module /path/to/$expected_fastrpc_module /path/to/$expected_pdm_module" >&2
 	exit 2
 }
 
-[ "$#" -eq 4 ] || usage
+[ "$#" -eq 5 ] || usage
 [ "$(id -u)" -eq 0 ] || {
 	echo "must run as root" >&2
 	exit 1
@@ -35,7 +40,8 @@ source_uki=$(realpath -- "$1")
 source_ssc_module=$(realpath -- "$2")
 source_spi_module=$(realpath -- "$3")
 source_fastrpc_module=$(realpath -- "$4")
-for source in "$source_uki" "$source_ssc_module" "$source_spi_module" "$source_fastrpc_module"; do
+source_pdm_module=$(realpath -- "$5")
+for source in "$source_uki" "$source_ssc_module" "$source_spi_module" "$source_fastrpc_module" "$source_pdm_module"; do
 	[ -s "$source" ] || {
 		echo "missing production artifact: $source" >&2
 		exit 1
@@ -45,6 +51,7 @@ done
 [ "$(basename -- "$source_ssc_module")" = "$expected_ssc_module" ] || usage
 [ "$(basename -- "$source_spi_module")" = "$expected_spi_module" ] || usage
 [ "$(basename -- "$source_fastrpc_module")" = "$expected_fastrpc_module" ] || usage
+[ "$(basename -- "$source_pdm_module")" = "$expected_pdm_module" ] || usage
 source_uki_sha256=$(sha256sum "$source_uki" | cut -d ' ' -f 1)
 [ "$source_uki_sha256" = "$expected_production_sha256" ] || {
 	echo "production UKI SHA256 mismatch" >&2
@@ -74,7 +81,8 @@ fi
 [ "$(modinfo -F name "$source_ssc_module")" = nabu_sm8150_ssc ] || exit 1
 [ "$(modinfo -F name "$source_spi_module")" = spi_geni_qcom ] || exit 1
 [ "$(modinfo -F name "$source_fastrpc_module")" = fastrpc ] || exit 1
-for source_module in "$source_ssc_module" "$source_spi_module" "$source_fastrpc_module"; do
+[ "$(modinfo -F name "$source_pdm_module")" = qcom_pd_mapper ] || exit 1
+for source_module in "$source_ssc_module" "$source_spi_module" "$source_fastrpc_module" "$source_pdm_module"; do
 	module_vermagic=$(modinfo -F vermagic "$source_module")
 	case $module_vermagic in
 		"$kernel_release "*) ;;
@@ -87,6 +95,11 @@ done
 strings "$source_fastrpc_module" | grep -Fq \
 	'enabling SM8150 SDSP high-IOVA workaround' || {
 	echo "FastRPC module lacks the validated SM8150 SDSP workaround" >&2
+	exit 1
+}
+strings "$source_fastrpc_module" | grep -Fq \
+	'tracking protection domain %s for %s' || {
+	echo "FastRPC module lacks SLPI attach-PD PDR gating" >&2
 	exit 1
 }
 [ -b "$esp_device" ] || {
@@ -133,10 +146,13 @@ installed_uki_sha256=$(sha256sum "$destination_uki" | cut -d ' ' -f 1)
 install -d -o root -g root -m 0700 "$backup_dir"
 if [ -e "$backup_uki" ]; then
 	backup_sha256=$(sha256sum "$backup_uki" | cut -d ' ' -f 1)
-	[ "$backup_sha256" = "$original_default_sha256" ] || {
-		echo "refusing unexpected default UKI backup: $backup_uki" >&2
-		exit 1
-	}
+	case $backup_sha256 in
+		"$original_default_sha256"|"$alternate_original_backup_sha256") ;;
+		*)
+			echo "refusing unexpected default UKI backup: $backup_uki" >&2
+			exit 1
+			;;
+	esac
 elif [ "$installed_uki_sha256" = "$original_default_sha256" ]; then
 	install -o root -g root -m 0600 "$destination_uki" "$backup_uki.new"
 	sync "$backup_uki.new"
@@ -152,10 +168,13 @@ else
 fi
 
 if [ "$installed_uki_sha256" != "$source_uki_sha256" ]; then
-	[ "$installed_uki_sha256" = "$original_default_sha256" ] || {
-		echo "refusing to overwrite an unknown default UKI" >&2
-		exit 1
-	}
+	case $installed_uki_sha256 in
+		"$original_default_sha256"|"$previous_production_sha256"|"$older_production_sha256") ;;
+		*)
+			echo "refusing to overwrite an unknown default UKI" >&2
+			exit 1
+			;;
+	esac
 	rm -f -- "$temporary_uki"
 	install -m 0644 -- "$source_uki" "$temporary_uki"
 	sync "$temporary_uki"
@@ -169,8 +188,9 @@ install -d -m 0755 -- "$(dirname -- "$ssc_module_target")"
 install -m 0644 -- "$source_ssc_module" "$ssc_module_target"
 install -m 0644 -- "$source_spi_module" "$spi_module_target"
 install -m 0644 -- "$source_fastrpc_module" "$fastrpc_module_target"
+install -m 0644 -- "$source_pdm_module" "$pdm_module_target"
 depmod "$kernel_release"
-sync "$ssc_module_target" "$spi_module_target" "$fastrpc_module_target"
+sync "$ssc_module_target" "$spi_module_target" "$fastrpc_module_target" "$pdm_module_target"
 
 echo "promoted the validated SLPI accelerometer UKI to the existing default path"
 echo "default UKI: $destination_uki"

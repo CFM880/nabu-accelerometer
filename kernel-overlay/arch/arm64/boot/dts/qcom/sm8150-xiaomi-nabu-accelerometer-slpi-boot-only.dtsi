@@ -14,6 +14,8 @@
 
 	glink-edge {
 		fastrpc {
+			qcom,protection-domain = "tms/servreg", "msm/slpi/root_pd";
+
 			compute-cb@1 {
 				dma-coherent;
 			};

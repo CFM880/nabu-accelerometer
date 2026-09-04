@@ -84,6 +84,7 @@ export ARCH CROSS_COMPILE
 make -C "$kernel_tree" O="$output_dir" olddefconfig
 make -C "$kernel_tree" O="$output_dir" -j"$JOBS" \
 	Image modules_prepare drivers/misc/fastrpc.ko \
+	drivers/soc/qcom/qcom_pd_mapper.ko \
 	drivers/spi/spi-geni-qcom.ko "qcom/$dtb"
 
 module_output=$output_dir/nabu-accelerometer-driver
@@ -95,8 +96,10 @@ output_dtb=$output_dir/arch/arm64/boot/dts/qcom/$dtb
 test -f "$output_dtb"
 test -f "$module_output/nabu-sm8150-ssc.ko"
 test -f "$output_dir/drivers/misc/fastrpc.ko"
+test -f "$output_dir/drivers/soc/qcom/qcom_pd_mapper.ko"
 test -f "$output_dir/drivers/spi/spi-geni-qcom.ko"
 echo "built $profile DTB: $output_dtb"
 echo "built private SSC module: $module_output/nabu-sm8150-ssc.ko"
 echo "built FastRPC module: $output_dir/drivers/misc/fastrpc.ko"
+echo "built PD mapper module: $output_dir/drivers/soc/qcom/qcom_pd_mapper.ko"
 echo "built unmodified upstream SPI module: $output_dir/drivers/spi/spi-geni-qcom.ko"
