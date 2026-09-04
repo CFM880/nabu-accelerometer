@@ -341,8 +341,8 @@ tablet-mode 状态错误。
 ```
 
 即同时反转 X/Y、保留 Z，相当于绕屏幕法线旋转 180 度。专用
-`install-orientation-matrix.sh` 只接受项目早期 identity 规则的已知 SHA256 或已经
-修正的规则，然后 reload udev 并重启 SensorProxy；不修改内核、UKI 或启动项。
+`install-iio-sensor-proxy-ssc.sh` 会安装该规则，并且只接受项目早期 identity 规则的
+已知 SHA256 或已经修正的规则；它随后 reload udev 并重启 SensorProxy。
 
 矩阵安装后的活动用户采样把同一竖放姿态从 `bottom-up` 修正为 `normal`，证明矩阵
 本身正确。但完整重启暴露了 Mutter 原生竖屏初始化的时序边界：早期 helper 在
@@ -424,7 +424,7 @@ SHA256: b0b5078230aa2495d332ecf2ded65f44c46c6ead8fdaf1bea3804417c79ac398
 - `scripts/build-production-uki.sh`、`install-production-uki.sh`：默认启动推广；
 - `scripts/restore-production-uki.sh`：默认 UKI 回滚。
 
-## 12. 外部依据
+## 13. 外部依据
 
 - libssc 文档：<https://libssc.dylanvanassche.be/docs/>
 - libssc 源码：<https://codeberg.org/DylanVanAssche/libssc>

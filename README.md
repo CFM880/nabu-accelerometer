@@ -218,10 +218,9 @@ sudo ./scripts/install-hexagonrpcd.sh
 ```
 
 该配置把 daemon 连接到 `/dev/fastrpc-sdsp`，以 sensors-PD 模式运行，并把已有的
-`/lib/firmware/hexagonfs` 作为根目录。SLPI remoteproc 报告 `running` 时，
-sensors-PD 尚未稳定可用；该 override 因此在首次 FastRPC attach 前留出 15 秒
-稳定时间，避免 SSC QMI 在整个启动周期内无法注册。它不修改内核、UKI 或
-SLPI 固件。需要回滚时：
+`/lib/firmware/hexagonfs` 作为根目录。内核在首次 FastRPC attach 时等待 SLPI
+root-PD 的 PDR 通知，正常情况下立即继续，15 秒只作为异常超时。该配置不修改
+内核、UKI 或 SLPI 固件。需要回滚时：
 
 ```sh
 sudo ./scripts/remove-hexagonrpcd-nabu-config.sh
@@ -265,18 +264,13 @@ active 本地 session claim 传感器，因此 SSH 中运行 `monitor-sensor` �
 `Not Authorized`；测试脚本会在已有本地图形登录时通过临时 user unit 自动重试。
 真机方向测试实际报告了 `right-up` → `bottom-up` → `right-up` 和多次 tilt 变化，
 确认桌面层连续消费 SSC 加速度数据。重启后服务、udev 标记、FastRPC workaround
-和 `HasAccelerometer=true` 也全部自动恢复。回滚只需执行：
+和 `HasAccelerometer=true` 也全部自动恢复。
 
 Nabu 原厂 registry 的 identity matrix 是传感器坐标约定，不足以直接匹配 Linux
-桌面的面板方向。若已经安装过早期 identity 规则，执行下面的小迁移即可同时反转
-X/Y，修正画面固定上下颠倒的问题；它不重编译程序，也不修改 UKI：
+桌面的面板方向。`install-iio-sensor-proxy-ssc.sh` 会直接安装经过真机验证的
+`diag(-1,-1,1)` mount matrix，同时反转 X/Y，修正画面固定上下颠倒的问题。
 
-```sh
-sudo ./scripts/install-orientation-matrix.sh
-```
-
-新安装的 `install-iio-sensor-proxy-ssc.sh` 已直接包含该
-`diag(-1,-1,1)` mount matrix。
+需要回滚桌面集成时：
 
 ```sh
 sudo ./scripts/remove-iio-sensor-proxy-ssc.sh
