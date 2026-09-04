@@ -1,1 +1,0 @@
-root=PARTLABEL=linux rw fw_devlink=permissive console=ttyGS0 console=tty0 loglevel=8 ignore_loglevel no_console_suspend

@@ -1,5 +1,0 @@
-// SPDX-License-Identifier: BSD-3-Clause
-/* Xiaomi Pad 5 (nabu) SLPI boot-only diagnostic. */
-
-#include "sm8150-xiaomi-nabu.dts"
-#include "sm8150-xiaomi-nabu-accelerometer-slpi-boot-only.dtsi"

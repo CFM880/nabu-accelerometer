@@ -13,18 +13,7 @@ destination=$3
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 project_dir=$(dirname -- "$script_dir")
 dts_dir=$kernel_tree/arch/arm64/boot/dts/qcom
-
-dtb=sm8150-xiaomi-nabu-accelerometer-slpi-boot-only.dtb
-if [ -f "$dts_dir/sm8150-xiaomi-nabu-camera.dtsi" ]; then
-	dtb=sm8150-xiaomi-nabu-camera-accelerometer-slpi-boot-only.dtb
-fi
-if [ -f "$dts_dir/sm8150-xiaomi-nabu-iris.dtsi" ]; then
-	dtb=sm8150-xiaomi-nabu-iris-accelerometer-slpi-boot-only.dtb
-fi
-if [ -f "$dts_dir/sm8150-xiaomi-nabu-camera.dtsi" ] &&
-   [ -f "$dts_dir/sm8150-xiaomi-nabu-iris.dtsi" ]; then
-	dtb=sm8150-xiaomi-nabu-iris-camera-accelerometer-slpi-boot-only.dtb
-fi
+dtb=sm8150-xiaomi-nabu-iris-camera-accelerometer-slpi-boot-only.dtb
 
 image=$output_dir/arch/arm64/boot/Image
 devicetree=$output_dir/arch/arm64/boot/dts/qcom/$dtb

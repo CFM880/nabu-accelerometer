@@ -8,12 +8,10 @@ project_dir=$(dirname -- "$script_dir")
 if [ "$#" -eq 0 ] && [ -d "$project_dir/artifacts" ]; then
 	set -- \
 		"$project_dir/artifacts/nabu-accelerometer-production.efi" \
-		"$project_dir/artifacts/nabu-sm8150-ssc.ko" \
-		"$project_dir/artifacts/spi-geni-qcom.ko" \
 		"$project_dir/artifacts/fastrpc.ko" \
 		"$project_dir/artifacts/qcom_pd_mapper.ko"
-elif [ "$#" -ne 5 ]; then
-	echo "usage: sudo $0 [/path/to/nabu-accelerometer-production.efi /path/to/nabu-sm8150-ssc.ko /path/to/spi-geni-qcom.ko /path/to/fastrpc.ko /path/to/qcom_pd_mapper.ko]" >&2
+elif [ "$#" -ne 3 ]; then
+	echo "usage: sudo $0 [/path/to/nabu-accelerometer-production.efi /path/to/fastrpc.ko /path/to/qcom_pd_mapper.ko]" >&2
 	exit 2
 fi
 

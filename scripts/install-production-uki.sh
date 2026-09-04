@@ -10,46 +10,38 @@ older_production_sha256=04b6a1418e1f503969786ff32536119081e87b624fb5125cb86e452b
 default_uki=6.14.11-nabu-iris-camera1+-build1.efi
 original_default_sha256=873994f0af8d42f9cc65752b4381e77b2e153cd6bb8455d08bafcd8b05082491
 alternate_original_backup_sha256=19b2b48ca4bbe6d21064083d0ea8b2a3ec28edc02ee3d5c73c0cc90c3de04a07
-expected_ssc_module=nabu-sm8150-ssc.ko
-expected_spi_module=spi-geni-qcom.ko
 expected_fastrpc_module=fastrpc.ko
 expected_pdm_module=qcom_pd_mapper.ko
 esp_device=/dev/disk/by-partlabel/esp
 esp_mount=/boot/efi
 backup_dir=/var/lib/nabu-accelerometer
 backup_uki=$backup_dir/$default_uki.pre-accelerometer
-ssc_module_target=/lib/modules/$kernel_release/extra/$expected_ssc_module
-spi_module_target=/lib/modules/$kernel_release/kernel/drivers/spi/$expected_spi_module
 fastrpc_module_target=/lib/modules/$kernel_release/kernel/drivers/misc/$expected_fastrpc_module
 pdm_module_target=/lib/modules/$kernel_release/kernel/drivers/soc/qcom/$expected_pdm_module
 mounted_here=false
 
 usage()
 {
-	echo "usage: sudo $0 /path/to/$expected_uki /path/to/$expected_ssc_module /path/to/$expected_spi_module /path/to/$expected_fastrpc_module /path/to/$expected_pdm_module" >&2
+	echo "usage: sudo $0 /path/to/$expected_uki /path/to/$expected_fastrpc_module /path/to/$expected_pdm_module" >&2
 	exit 2
 }
 
-[ "$#" -eq 5 ] || usage
+[ "$#" -eq 3 ] || usage
 [ "$(id -u)" -eq 0 ] || {
 	echo "must run as root" >&2
 	exit 1
 }
 
 source_uki=$(realpath -- "$1")
-source_ssc_module=$(realpath -- "$2")
-source_spi_module=$(realpath -- "$3")
-source_fastrpc_module=$(realpath -- "$4")
-source_pdm_module=$(realpath -- "$5")
-for source in "$source_uki" "$source_ssc_module" "$source_spi_module" "$source_fastrpc_module" "$source_pdm_module"; do
+source_fastrpc_module=$(realpath -- "$2")
+source_pdm_module=$(realpath -- "$3")
+for source in "$source_uki" "$source_fastrpc_module" "$source_pdm_module"; do
 	[ -s "$source" ] || {
 		echo "missing production artifact: $source" >&2
 		exit 1
 	}
 done
 [ "$(basename -- "$source_uki")" = "$expected_uki" ] || usage
-[ "$(basename -- "$source_ssc_module")" = "$expected_ssc_module" ] || usage
-[ "$(basename -- "$source_spi_module")" = "$expected_spi_module" ] || usage
 [ "$(basename -- "$source_fastrpc_module")" = "$expected_fastrpc_module" ] || usage
 [ "$(basename -- "$source_pdm_module")" = "$expected_pdm_module" ] || usage
 source_uki_sha256=$(sha256sum "$source_uki" | cut -d ' ' -f 1)
@@ -78,11 +70,9 @@ if strings "$source_uki" | grep -Fq 'qcom,nabu-sm8150-scc'; then
 	exit 1
 fi
 
-[ "$(modinfo -F name "$source_ssc_module")" = nabu_sm8150_ssc ] || exit 1
-[ "$(modinfo -F name "$source_spi_module")" = spi_geni_qcom ] || exit 1
 [ "$(modinfo -F name "$source_fastrpc_module")" = fastrpc ] || exit 1
 [ "$(modinfo -F name "$source_pdm_module")" = qcom_pd_mapper ] || exit 1
-for source_module in "$source_ssc_module" "$source_spi_module" "$source_fastrpc_module" "$source_pdm_module"; do
+for source_module in "$source_fastrpc_module" "$source_pdm_module"; do
 	module_vermagic=$(modinfo -F vermagic "$source_module")
 	case $module_vermagic in
 		"$kernel_release "*) ;;
@@ -184,17 +174,14 @@ if [ "$installed_uki_sha256" != "$source_uki_sha256" ]; then
 	installed_uki_sha256=$source_uki_sha256
 fi
 
-install -d -m 0755 -- "$(dirname -- "$ssc_module_target")"
-install -m 0644 -- "$source_ssc_module" "$ssc_module_target"
-install -m 0644 -- "$source_spi_module" "$spi_module_target"
+install -d -m 0755 -- "$(dirname -- "$fastrpc_module_target")"
 install -m 0644 -- "$source_fastrpc_module" "$fastrpc_module_target"
 install -m 0644 -- "$source_pdm_module" "$pdm_module_target"
 depmod "$kernel_release"
-sync "$ssc_module_target" "$spi_module_target" "$fastrpc_module_target" "$pdm_module_target"
+sync "$fastrpc_module_target" "$pdm_module_target"
 
 echo "promoted the validated SLPI accelerometer UKI to the existing default path"
 echo "default UKI: $destination_uki"
 echo "production SHA256: $installed_uki_sha256"
 echo "recoverable original backup: $backup_uki"
-echo "the diagnostic nabu-accelerometer-test.efi entry was preserved"
-echo "reboot is required; start capture-usb-console.sh before rebooting"
+echo "reboot is required"

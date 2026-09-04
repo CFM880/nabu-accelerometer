@@ -11,7 +11,7 @@ fi
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 overlay_dir=$(dirname -- "$script_dir")/kernel-overlay
-fastrpc_patch=$(dirname -- "$script_dir")/patches/0001-fastrpc-sm8150-sdsp-high-iova.patch
+fastrpc_patch=$(dirname -- "$script_dir")/patches/0001-sm8150-slpi-fastrpc-pdr.patch
 kernel_tree=$1
 
 if [ ! -f "$kernel_tree/Makefile" ] ||
@@ -72,16 +72,5 @@ cp -R "$overlay_dir/." "$kernel_tree/"
 
 echo "installed nabu-accelerometer overlay into $kernel_tree"
 echo "FastRPC SM8150 SDSP IOVA/PDR patch: $fastrpc_state"
-echo "accelerometer DTB target: qcom/sm8150-xiaomi-nabu-accelerometer-slpi-boot-only.dtb"
-echo "active diagnostic: slpi-boot-only (PAS firmware boot, no AP-side SCC/SSC MMIO)"
-echo "safe fallback: ssc-powered-empty-provider (LCX resume, no SCC MMIO)"
-echo "all SCC MMIO profiles are blocked after the first powered read hard-locked"
-echo "all AP QUP0 profiles are retired and blocked"
-echo "config fragment: config/nabu-accelerometer.config"
-if [ -f "$kernel_tree/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu-camera.dtsi" ]; then
-	echo "camera combination is available"
-fi
-if [ -f "$kernel_tree/arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu-iris.dtsi" ]; then
-	echo "Iris combination is available"
-fi
+echo "production DTB target: qcom/sm8150-xiaomi-nabu-iris-camera-accelerometer-slpi-boot-only.dtb"
 git -C "$kernel_tree" status --short
