@@ -46,14 +46,15 @@ protection domain msm/slpi/root_pd is up
 
 `hexagonrpcd` 使用 `/dev/fastrpc-sdsp` 并把 `/lib/firmware/hexagonfs` 提供给 sensors
 PD。libssc 0.4.4 通过 QRTR/QMI 读取 SSC 数据。iio-sensor-proxy 3.9 的 SSC backend
-向桌面导出加速度计，udev mount matrix 为：
+向桌面导出加速度计、环境光和罗盘，udev mount matrix 为：
 
 ```text
 -1,0,0;0,-1,0;0,0,1
 ```
 
-`nabu-tablet-mode` 只补充缺失的 `SW_TABLET_MODE`，屏幕方向仍由 GNOME/Mutter 根据
-SensorProxy 数据决定。
+环境光来自 TCS3701，罗盘来自 Qualcomm Rotation Vector；陀螺仪和 AK0991x 原始
+磁场数据可通过 `ssccli` 读取。`nabu-tablet-mode` 只补充缺失的
+`SW_TABLET_MODE`，屏幕方向仍由 GNOME/Mutter 根据 SensorProxy 数据决定。
 
 ## Production validation
 

@@ -51,13 +51,7 @@ iio_archive=$artifact_dir/iio-sensor-proxy-3.9.tar.gz
 if [ -s "$iio_archive" ]; then
 	"$libexec_dir/install-iio-sensor-proxy-ssc.sh" "$iio_archive"
 else
-	[ -x /usr/local/libexec/iio-sensor-proxy-ssc ] &&
-		strings /usr/local/libexec/iio-sensor-proxy-ssc | \
-		grep -Fq 'SSC accelerometer sensor' || {
-		echo "missing $iio_archive and the SSC sensor proxy is not installed" >&2
-		exit 1
-	}
-	echo "using installed SSC iio-sensor-proxy"
+	"$libexec_dir/install-iio-sensor-proxy-ssc.sh"
 fi
 
 tablet_binary=$artifact_dir/nabu-tablet-mode
@@ -71,5 +65,5 @@ else
 	echo "using installed tablet-mode helper"
 fi
 
-echo "installed the final Nabu accelerometer stack"
+echo "installed the final Nabu sensor stack"
 echo "reboot is required for the UKI and kernel modules"

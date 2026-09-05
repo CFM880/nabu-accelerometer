@@ -31,10 +31,11 @@ if [ -e "$dropin" ]; then
 	rmdir --ignore-fail-on-non-empty "$(dirname -- "$dropin")"
 fi
 if [ -e "$rule" ]; then
-	grep -Fq 'IIO_SENSOR_PROXY_TYPE}+="ssc-accel"' "$rule" || {
+	if ! grep -Fq 'IIO_SENSOR_PROXY_TYPE}+="ssc-accel ssc-light ssc-compass"' "$rule" &&
+	   ! grep -Fq 'IIO_SENSOR_PROXY_TYPE}+="ssc-accel"' "$rule"; then
 		echo "refusing to remove unexpected udev rule: $rule" >&2
 		exit 1
-	}
+	fi
 	rm -- "$rule"
 fi
 

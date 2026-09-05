@@ -1,14 +1,14 @@
 # nabu-accelerometer
 
-Xiaomi Pad 5（nabu）的最终加速度计方案。传感器由 SLPI/SSC 固件管理，Linux 通过
+Xiaomi Pad 5（nabu）的 SLPI/SSC 传感器方案。传感器由 SLPI/SSC 固件管理，Linux 通过
 FastRPC、QRTR/QMI 和 libssc 读取数据，不直接访问 SSC SPI 或 Sensor Clock
 Controller 寄存器。
 
 ## 最终架构
 
 ```text
-LSM6DSO -> SLPI/SSC firmware -> FastRPC/QRTR -> libssc
-        -> iio-sensor-proxy -> GNOME/Mutter
+LSM6DSO / TCS3701 / AK0991x -> SLPI/SSC firmware -> FastRPC/QRTR -> libssc
+                                             -> iio-sensor-proxy -> desktop
 ```
 
 内核补丁完成两件事：
@@ -83,15 +83,26 @@ iio-sensor-proxy 和 tablet-mode helper。已正确安装的 userspace 组件不
 
 ```sh
 sudo bash scripts/verify.sh
-sudo bash scripts/verify.sh 20   # 额外采样 20 秒
+sudo bash scripts/verify.sh 20   # 每种 SSC 传感器额外采样 20 秒
 ```
 
 最终真机启动应满足：
 
 - 四个 remoteproc 都为 `running`；
 - `hexagonrpcd` 和 `iio-sensor-proxy` 为 active，`NRestarts=0`；
-- D-Bus 返回 `HasAccelerometer=true`；
+- D-Bus 返回 `HasAccelerometer=true`、`HasAmbientLight=true` 和
+  `HasCompass=true`；
 - 日志没有 SLPI crash、USER-PD watchdog、attach timeout 或 IOMMU fault。
+
+桌面接口使用 LSM6DSO 加速度计、TCS3701 环境光传感器和基于 Qualcomm Rotation
+Vector 的罗盘。libssc CLI 还可以直接读取 LSM6DSO 陀螺仪和 AK0991x 磁力计：
+
+```sh
+ssccli --sensor gyroscope --timeout 10
+ssccli --sensor magnetometer --timeout 10
+ssccli --sensor light --timeout 10
+ssccli --sensor compass --timeout 10
+```
 
 ## 回滚
 

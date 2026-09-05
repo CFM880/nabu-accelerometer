@@ -15,9 +15,10 @@ The installed SLPI image is
 registry files are exposed through `/lib/firmware/hexagonfs` and the FastRPC
 reverse listener.
 
-Android vendor sensor configuration identifies the accelerometer as LSM6DSO on
-SSC SPI bus instance 2, chip select 0. That bus is owned by SLPI, not an AP QUP
-controller.
+Android vendor sensor configuration identifies the accelerometer and gyroscope
+as LSM6DSO on SSC SPI bus instance 2, chip select 0. It also configures an
+AK0991x magnetometer and TCS3701 ambient-light sensor. These buses are owned by
+SLPI, not an AP QUP controller.
 
 ## Userspace
 
