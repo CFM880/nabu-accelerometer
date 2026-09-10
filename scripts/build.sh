@@ -21,6 +21,12 @@ artifact_dir=$(CDPATH= cd -- "$3" && pwd)
 dts_dir=$kernel_tree/arch/arm64/boot/dts/qcom
 dtb=sm8150-xiaomi-nabu-iris-camera-accelerometer-slpi-boot-only.dtb
 
+# Prefer the combined DTB that also carries battery/charging when the
+# nabu-power overlay has been installed into the same kernel tree.
+if [ -f "$dts_dir/sm8150-xiaomi-nabu-iris-camera-accelerometer-power.dts" ]; then
+	dtb=sm8150-xiaomi-nabu-iris-camera-accelerometer-power.dtb
+fi
+
 if [ ! -f "$dts_dir/${dtb%.dtb}.dts" ]; then
 	echo "accelerometer overlay installation did not create the production DTS" >&2
 	exit 1

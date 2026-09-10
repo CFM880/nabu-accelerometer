@@ -15,6 +15,11 @@ project_dir=$(dirname -- "$script_dir")
 dts_dir=$kernel_tree/arch/arm64/boot/dts/qcom
 dtb=sm8150-xiaomi-nabu-iris-camera-accelerometer-slpi-boot-only.dtb
 
+# Use the battery/charging combination DTB when nabu-power is installed.
+if [ -f "$dts_dir/sm8150-xiaomi-nabu-iris-camera-accelerometer-power.dts" ]; then
+	dtb=sm8150-xiaomi-nabu-iris-camera-accelerometer-power.dtb
+fi
+
 image=$output_dir/arch/arm64/boot/Image
 devicetree=$output_dir/arch/arm64/boot/dts/qcom/$dtb
 kernel_release=$(make -s -C "$kernel_tree" O="$output_dir" kernelrelease)

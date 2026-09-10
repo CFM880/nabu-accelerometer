@@ -4,9 +4,10 @@ set -eu
 
 kernel_release=6.14.11-nabu-iris-camera1+
 expected_uki=nabu-accelerometer-production.efi
-expected_production_sha256=b0b5078230aa2495d332ecf2ded65f44c46c6ead8fdaf1bea3804417c79ac398
-previous_production_sha256=415c396d48c085a92f8d7c79eca6b9792e3dd505b30f93d4915db001ff98ba67
-older_production_sha256=04b6a1418e1f503969786ff32536119081e87b624fb5125cb86e452b84a7dbf0
+expected_production_sha256=4dafcd54882cae38a28639751828a801655a092cb809cd00fd922d9e894813fe
+previous_production_sha256=df6ed9c1977c639cd5d63d650424e4a6e515576d23cb2e451f9092cfa146207e
+older_production_sha256=b67d30a57d6851a26925a4046b9e15a68c6944c68a4fd4656fb5af7091eabb9a
+legacy_production_sha256=1a096bf10878713b8b90e4a4bb7b2d038b339e8a2138e0087430553f4780715e
 default_uki=6.14.11-nabu-iris-camera1+-build1.efi
 original_default_sha256=873994f0af8d42f9cc65752b4381e77b2e153cd6bb8455d08bafcd8b05082491
 alternate_original_backup_sha256=19b2b48ca4bbe6d21064083d0ea8b2a3ec28edc02ee3d5c73c0cc90c3de04a07
@@ -159,7 +160,7 @@ fi
 
 if [ "$installed_uki_sha256" != "$source_uki_sha256" ]; then
 	case $installed_uki_sha256 in
-		"$original_default_sha256"|"$previous_production_sha256"|"$older_production_sha256") ;;
+		"$original_default_sha256"|"$previous_production_sha256"|"$older_production_sha256"|"$legacy_production_sha256"|"$expected_production_sha256") ;;
 		*)
 			echo "refusing to overwrite an unknown default UKI" >&2
 			exit 1
