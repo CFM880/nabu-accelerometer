@@ -28,12 +28,19 @@ SLPI, not an AP QUP controller.
   `patches/0002-ssc-light-filter.patch` and `userspace/nabu-light-filter.h`
   for ambient-light smoothing and hysteresis (the pinned archive is unchanged)
 
-Pinned archives:
+Pinned archives are vendored under `third_party/`:
 
 ```text
-libssc-v0.4.4.tar.gz
+third_party/libssc-v0.4.4.tar.gz
 SHA256: 716d6bd6b34d2d753060c6b54c9a87e34fae75b724c763bf9ef487efa3621587
 
-iio-sensor-proxy-3.9.tar.gz
+third_party/iio-sensor-proxy-3.9.tar.gz
 SHA256: af5edd307dcfa52dc3a242d13b7cc756e90a71640caf332efbad960e21649ae4
 ```
+
+The install hook verifies the SHA256, extracts the archive and builds it under
+`third_party/build/` (`libssc/` and `iio-sensor-proxy/`), applies
+`patches/0002-ssc-light-filter.patch` and `userspace/nabu-light-filter.h` to
+iio-sensor-proxy, and only rebuilds a component that is missing or out of date.
+An explicit archive placed in the artifacts directory takes precedence over the
+vendored one.

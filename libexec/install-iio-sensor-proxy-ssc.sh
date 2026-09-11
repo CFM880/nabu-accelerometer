@@ -104,12 +104,11 @@ if [ -n "$archive" ]; then
 		libgudev-1.0-dev \
 		libpolkit-gobject-1-dev
 
-	build_root=$(mktemp -d /tmp/nabu-iio-sensor-proxy-build.XXXXXX)
-	cleanup()
-	{
-		rm -rf -- "$build_root"
-	}
-	trap cleanup EXIT HUP INT TERM
+	# Extract and build inside the repository so the sources remain inspectable.
+	project_dir=$(dirname -- "$script_dir")
+	build_root=$project_dir/third_party/build/iio-sensor-proxy
+	rm -rf -- "$build_root"
+	install -d -m 0755 "$build_root"
 
 	source_dir=$build_root/source
 	build_dir=$build_root/build

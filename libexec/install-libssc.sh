@@ -59,12 +59,12 @@ apt-get install --no-install-recommends -y \
 	protobuf-c-compiler \
 	protobuf-compiler
 
-build_root=$(mktemp -d /tmp/nabu-libssc-build.XXXXXX)
-cleanup()
-{
-	rm -rf -- "$build_root"
-}
-trap cleanup EXIT HUP INT TERM
+# Extract and build inside the repository so the sources remain inspectable.
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+project_dir=$(dirname -- "$script_dir")
+build_root=$project_dir/third_party/build/libssc
+rm -rf -- "$build_root"
+install -d -m 0755 "$build_root"
 
 source_dir=$build_root/source
 build_dir=$build_root/build

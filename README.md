@@ -68,16 +68,14 @@ sudo bash scripts/install.sh /path/to/artifacts
 安装器会校验 UKI SHA256、模块名称和 vermagic，备份原默认 UKI，再原子替换第 31
 分区中的默认文件。安装完成后重启。
 
-首次部署时，把下面两个固定版本源码包也放进 `artifacts/`：
+两个固定版本源码包已随仓库保存在 `third_party/`（SHA256 见 [SOURCE.md](SOURCE.md)）。
+需要重编时会在仓库内 `third_party/build/`（`libssc/`、`iio-sensor-proxy/`）解压构建，
+给 iio-sensor-proxy 打上 `patches/0002-ssc-light-filter.patch` 并编译，无需再从外部
+准备；已正确安装的组件会直接复用。若要用别的归档，可放进 `artifacts/` 覆盖
+（artifacts 优先）。
 
-```text
-libssc-v0.4.4.tar.gz
-iio-sensor-proxy-3.9.tar.gz
-```
-
-`install.sh` 会统一处理第 31 分区、内核模块、SLPI 文件系统、hexagonrpcd、libssc、
-iio-sensor-proxy 和 tablet-mode helper。已正确安装的 userspace 组件不会要求重复提供
-源码包。
+`install.sh`（统一构建下由 `nabu-main install` 调用）会处理 SLPI 文件系统、
+hexagonrpcd、libssc、iio-sensor-proxy 和 tablet-mode helper。
 
 ## 验证
 
