@@ -20,6 +20,7 @@ kernel_targets = [
     "drivers/misc/fastrpc.ko",
     "drivers/soc/qcom/qcom_pd_mapper.ko",
 ]
+hook = "scripts/nabu-build.sh"
 
 [hooks]
 install = "scripts/nabu-install.sh"
@@ -27,6 +28,7 @@ install = "scripts/nabu-install.sh"
 [artifacts]
 "fastrpc.ko"        = "out:drivers/misc/fastrpc.ko"
 "qcom_pd_mapper.ko" = "out:drivers/soc/qcom/qcom_pd_mapper.ko"
+"nabu-tablet-mode"  = "module:out/nabu-tablet-mode"
 
 [install]
 "fastrpc.ko"        = "/lib/modules/@release@/kernel/drivers/misc/fastrpc.ko"
