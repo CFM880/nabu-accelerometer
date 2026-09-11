@@ -24,7 +24,9 @@ SLPI, not an AP QUP controller.
 
 - hexagonrpc: Ubuntu package 0.4.0
 - libssc: `https://codeberg.org/DylanVanAssche/libssc`, version 0.4.4
-- iio-sensor-proxy: upstream version 3.9 with SSC backend
+- iio-sensor-proxy: upstream version 3.9 with SSC backend, plus local
+  `patches/0002-ssc-light-filter.patch` and `userspace/nabu-light-filter.h`
+  for ambient-light smoothing and hysteresis (the pinned archive is unchanged)
 
 Pinned archives:
 

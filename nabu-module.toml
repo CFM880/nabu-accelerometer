@@ -1,0 +1,33 @@
+schema = 1
+
+[module]
+name        = "nabu-accelerometer"
+description = "SLPI/SSC sensor stack via FastRPC and QRTR/QMI"
+requires    = []
+
+[provides]
+overlay      = "kernel-overlay"
+patches      = ["patches/0001-sm8150-slpi-fastrpc-pdr.patch"]
+dtsi         = ["arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu-accelerometer-slpi-boot-only.dtsi"]
+config       = ["config/nabu-accelerometer.config"]
+systemd      = ["config/nabu-tablet-mode.service"]
+modules_load = ["config/nabu-slpi-hexagonrpcd.conf", "config/nabu-ssc-iio-sensor-proxy.conf"]
+rules        = ["config/90-nabu-ssc-accelerometer.rules"]
+userspace    = ["userspace/nabu-tablet-mode.c", "userspace/nabu-light-filter.h"]
+
+[build]
+kernel_targets = [
+    "drivers/misc/fastrpc.ko",
+    "drivers/soc/qcom/qcom_pd_mapper.ko",
+]
+
+[hooks]
+install = "scripts/nabu-install.sh"
+
+[artifacts]
+"fastrpc.ko"        = "out:drivers/misc/fastrpc.ko"
+"qcom_pd_mapper.ko" = "out:drivers/soc/qcom/qcom_pd_mapper.ko"
+
+[install]
+"fastrpc.ko"        = "/lib/modules/@release@/kernel/drivers/misc/fastrpc.ko"
+"qcom_pd_mapper.ko" = "/lib/modules/@release@/kernel/drivers/soc/qcom/qcom_pd_mapper.ko"

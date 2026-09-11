@@ -56,6 +56,19 @@ PD。libssc 0.4.4 通过 QRTR/QMI 读取 SSC 数据。iio-sensor-proxy 3.9 的 S
 磁场数据可通过 `ssccli` 读取。`nabu-tablet-mode` 只补充缺失的
 `SW_TABLET_MODE`，屏幕方向仍由 GNOME/Mutter 根据 SensorProxy 数据决定。
 
+### 环境光滤波回归验证
+
+`patches/0002-ssc-light-filter.patch` 将 `userspace/nabu-light-filter.h` 接入
+SSC 光感后端。滤波使用单调时钟，在传感器停止或关闭时移除定时器。
+回归测试覆盖实测范围内的反复波动、短时遮挡、仅单次上报的持续明暗变化、无效值及重置，
+以及输出渐变速度、五秒短时变化和事件循环停顿后的步长限制：
+
+```sh
+cc -Wall -Wextra -Werror -std=c11 userspace/test-light-filter.c \
+  -o /tmp/nabu-test-light-filter $(pkg-config --cflags --libs glib-2.0) -lm
+/tmp/nabu-test-light-filter
+```
+
 ## Production validation
 
 生产 UKI：

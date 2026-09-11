@@ -27,9 +27,11 @@ usage()
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 dropin_source=$script_dir/../config/nabu-ssc-iio-sensor-proxy.conf
 rule_source=$script_dir/../config/90-nabu-ssc-accelerometer.rules
+light_patch=$script_dir/../patches/0002-ssc-light-filter.patch
+light_filter=$script_dir/../userspace/nabu-light-filter.h
 archive=
 
-for source in "$dropin_source" "$rule_source"; do
+for source in "$dropin_source" "$rule_source" "$light_patch" "$light_filter"; do
 	[ -f "$source" ] || {
 		echo "missing packaged configuration: $source" >&2
 		exit 1
@@ -94,6 +96,7 @@ fi
 if [ -n "$archive" ]; then
 	apt-get install --no-install-recommends -y \
 		build-essential \
+		patch \
 		meson \
 		ninja-build \
 		pkgconf \
@@ -112,6 +115,8 @@ if [ -n "$archive" ]; then
 	build_dir=$build_root/build
 	install -d -m 0755 "$source_dir"
 	tar -xzf "$archive" --strip-components=1 -C "$source_dir"
+	patch --batch --fuzz=0 -d "$source_dir" -p1 < "$light_patch"
+	install -m 0644 "$light_filter" "$source_dir/src/nabu-light-filter.h"
 
 	meson setup "$build_dir" "$source_dir" \
 		--prefix=/usr/local \
@@ -125,6 +130,10 @@ if [ -n "$archive" ]; then
 	meson compile -C "$build_dir"
 
 	built_binary=$build_dir/src/iio-sensor-proxy
+	strings "$built_binary" | grep -Fq 'Nabu SSC light filter v2 enabled' || {
+		echo "built binary lacks the Nabu light filter" >&2
+		exit 1
+	}
 	[ -x "$built_binary" ] || {
 		echo "missing built iio-sensor-proxy binary" >&2
 		exit 1
@@ -147,6 +156,9 @@ else
 		echo "missing $expected_archive and the SSC sensor proxy is not installed" >&2
 		exit 1
 	}
+	if ! strings "$binary" | grep -Fq 'Nabu SSC light filter v2 enabled'; then
+		echo "existing SSC proxy has no light filter; rebuild with $expected_archive to enable it" >&2
+	fi
 fi
 
 install -d -o root -g root -m 0755 "$dropin_dir" /etc/udev/rules.d

@@ -1,0 +1,90 @@
+--- a/src/drv-ssc-light.c
++++ b/src/drv-ssc-light.c
+@@ -7,6 +7,7 @@
+  */
+ 
+ #include "drivers.h"
++#include "nabu-light-filter.h"
+ 
+ #include <fcntl.h>
+ #include <unistd.h>
+@@ -21,6 +22,8 @@
+ typedef struct DrvData {
+ 	SSCSensorLight *sensor;
+ 	gulong measurement_id;
++	guint filter_timer;
++	NabuLightFilter filter;
+ } DrvData;
+ 
+ static gboolean
+@@ -45,14 +48,38 @@
+ }
+ 
+ static void
++publish_light (SensorDevice *sensor_device)
++{
++	DrvData *drv_data = sensor_device->priv;
++	LightReadings readings = {
++		.level = drv_data->filter.published,
++		.uses_lux = TRUE,
++	};
++
++	sensor_device->callback_func (sensor_device, &readings, sensor_device->user_data);
++}
++
++static gboolean
++filter_tick (gpointer user_data)
++{
++	SensorDevice *sensor_device = user_data;
++	DrvData *drv_data = sensor_device->priv;
++
++	if (nabu_light_filter_poll (&drv_data->filter, g_get_monotonic_time ()))
++		publish_light (sensor_device);
++	return G_SOURCE_CONTINUE;
++}
++
++static void
+ measurement_cb (SSCSensorLight *sensor, gfloat intensity, gpointer user_data)
+ {
+ 	SensorDevice *sensor_device = user_data;
+-	LightReadings readings;
++	DrvData *drv_data = sensor_device->priv;
++	gint64 now = g_get_monotonic_time ();
+ 
+-	readings.level = intensity;
+-	readings.uses_lux = TRUE;
+-	sensor_device->callback_func (sensor_device, (gpointer) &readings, sensor_device->user_data);
++	if (nabu_light_filter_sample (&drv_data->filter, intensity, now) ||
++	    nabu_light_filter_poll (&drv_data->filter, now))
++		publish_light (sensor_device);
+ }
+ 
+ static SensorDevice *
+@@ -85,6 +112,9 @@
+ 	if (state) {
+ 		if (drv_data->measurement_id)
+ 			return;
++		drv_data->filter = (NabuLightFilter) { 0 };
++		g_debug ("Nabu SSC light filter v2 enabled");
++		drv_data->filter_timer = g_timeout_add (250, filter_tick, sensor_device);
+ 		/* Start listening for measurements */
+ 		drv_data->measurement_id = g_signal_connect (drv_data->sensor,
+ 					                     "measurement",
+@@ -97,6 +127,8 @@
+ 		if (!drv_data->measurement_id)
+ 			return;
+ 
++		g_clear_handle_id (&drv_data->filter_timer, g_source_remove);
++		drv_data->filter = (NabuLightFilter) { 0 };
+ 		/* Stop listening for measurements */
+ 		g_clear_signal_handler (&drv_data->measurement_id, drv_data->sensor);
+ 
+@@ -112,6 +144,8 @@
+ 	g_autoptr(GError) error = NULL;
+ 	DrvData *drv_data = (DrvData *) sensor_device->priv;
+ 
++	g_clear_handle_id (&drv_data->filter_timer, g_source_remove);
++	g_clear_signal_handler (&drv_data->measurement_id, drv_data->sensor);
+ 	g_clear_object (&drv_data->sensor);
+ 	g_clear_pointer (&sensor_device->priv, g_free);
+ 	g_free (sensor_device);

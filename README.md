@@ -104,6 +104,32 @@ ssccli --sensor light --timeout 10
 ssccli --sensor compass --timeout 10
 ```
 
+### 自动亮度防抖
+
+SSC 环境光后端加入 Nabu 滤波补丁：使用时间平滑，忽略相对已确认目标不超过
+25%（至少 4 lux）的波动。当前读数和平滑值都越过阈值后，普通调亮需持续 6 秒，
+调暗需持续 12 秒；超过两倍的变化分别缩短为 2 秒和 8 秒。平滑本身也有延迟。
+确认新目标后，每 250 毫秒逐步过渡，每步最多改变当前输出的 1.5%
+（低照度下最多 0.125 lux），避免等待后突然跳变。首次读数直接上报，释放传感器后重置状态。
+定时器保证 SSC 仅在数值变化时发送一次事件，也能完成持续变化确认。
+
+这会改变桌面 D-Bus 的 `LightLevel`；`ssccli --sensor light` 仍可读取未经过此
+滤波的光感数据。参数旨在减少恒定照明下的忽明忽暗，实际环境变化需要稍等才能响应。
+
+已有安装需提供 `iio-sensor-proxy-3.9.tar.gz` 重新构建才能启用补丁。只更新光感
+代理、无需重装内核或重启机器：
+
+```sh
+sudo sh libexec/install-iio-sensor-proxy-ssc.sh /path/to/iio-sensor-proxy-3.9.tar.gz
+```
+
+代理重启后，当前 GNOME 会话可能仍保留旧连接，导致收到光感值但背光不再跟随。
+在桌面用户的终端执行下列命令，重新连接电源服务（无需 sudo）：
+
+```sh
+systemctl --user restart org.gnome.SettingsDaemon.Power.target
+```
+
 ## 回滚
 
 ```sh
