@@ -19,7 +19,11 @@ The kernel patches accomplish two things:
 - wait for the SLPI root-PD PDR notification before `FASTRPC_IOCTL_INIT_ATTACH_SNS`.
 
 On a normal boot the root PD is already up, so it does not wait; 15 seconds is only an abnormal
-timeout. The production UKI also enables Camera and masks `venus_core` and `qcom_iris` via cmdline.
+timeout. The production UKI is built by `nabu-main`, enables both Camera and Iris, and only masks
+`venus_core` (mainline Venus) via cmdline; `qcom_iris` loads normally, and sensors and video decode
+have been verified to coexist on the unified production kernel. The repository's legacy standalone
+sensor-UKI build/install scripts (`scripts/build.sh`, `libexec/*production-uki*`, ...) are superseded
+by `nabu-main` and kept for reference only.
 
 ## Build
 

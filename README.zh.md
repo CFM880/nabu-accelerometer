@@ -18,8 +18,11 @@ LSM6DSO / TCS3701 / AK0991x -> SLPI/SSC firmware -> FastRPC/QRTR -> libssc
 - 为 SM8150 SDSP buffer 建立 DSP 所需的高 IOVA alias；
 - 在 `FASTRPC_IOCTL_INIT_ATTACH_SNS` 前等待 SLPI root-PD 的 PDR 通知。
 
-正常启动时 root PD 已经上线，因此不会等待；15 秒仅为异常超时。生产 UKI 同时启用
-Camera，并通过 cmdline 屏蔽 `venus_core` 和 `qcom_iris`。
+正常启动时 root PD 已经上线，因此不会等待；15 秒仅为异常超时。生产 UKI 由
+`nabu-main` 统一构建，同时启用 Camera 与 Iris，只通过 cmdline 屏蔽 `venus_core`
+（mainline Venus）；`qcom_iris` 正常加载，传感器与视频解码在统一生产内核上已验证
+可以共存。仓库内遗留的独立 sensor UKI 构建/安装脚本（`scripts/build.sh`、
+`libexec/*production-uki*` 等）会被 `nabu-main` 取代，仅作历史参考。
 
 ## 构建
 
