@@ -1,0 +1,882 @@
+diff -ruN iio-ref/data/net.hadess.SensorProxy.conf.in iio-new/data/net.hadess.SensorProxy.conf.in
+--- a/data/net.hadess.SensorProxy.conf.in	2026-03-03 03:19:51.000000000 +0800
++++ b/data/net.hadess.SensorProxy.conf.in	2026-09-22 16:53:27.702726609 +0800
+@@ -17,6 +17,8 @@
+     <allow send_destination="net.hadess.SensorProxy" send_interface="org.freedesktop.DBus.Properties"/>
+     <allow send_destination="net.hadess.SensorProxy" send_interface="org.freedesktop.DBus.Peer"/>
+     <allow send_destination="net.hadess.SensorProxy" send_interface="net.hadess.SensorProxy.Compass"/>
++    <allow send_destination="net.hadess.SensorProxy" send_interface="net.hadess.SensorProxy.Gyroscope"/>
++    <allow send_destination="net.hadess.SensorProxy" send_interface="net.hadess.SensorProxy.Magnetometer"/>
+     <allow send_destination="net.hadess.SensorProxy" send_interface="org.freedesktop.DBus.Introspectable"/>
+     <allow send_destination="net.hadess.SensorProxy" send_interface="org.freedesktop.DBus.Properties"/>
+     <allow send_destination="net.hadess.SensorProxy" send_interface="org.freedesktop.DBus.Peer"/>
+diff -ruN iio-ref/src/drivers.h iio-new/src/drivers.h
+--- a/src/drivers.h	2026-03-03 03:19:51.000000000 +0800
++++ b/src/drivers.h	2026-09-22 16:42:46.625935244 +0800
+@@ -17,6 +17,8 @@
+ 	DRIVER_TYPE_LIGHT,
+ 	DRIVER_TYPE_COMPASS,
+ 	DRIVER_TYPE_PROXIMITY,
++	DRIVER_TYPE_GYRO,
++	DRIVER_TYPE_MAGNETOMETER,
+ } DriverType;
+ 
+ typedef enum {
+@@ -44,6 +46,18 @@
+ } CompassReadings;
+ 
+ typedef struct {
++	gdouble x;
++	gdouble y;
++	gdouble z;
++} AngularVelocityReadings;
++
++typedef struct {
++	gdouble x;
++	gdouble y;
++	gdouble z;
++} MagnetometerReadings;
++
++typedef struct {
+ 	ProximityNear is_near;
+ } ProximityReadings;
+ 
+@@ -166,6 +180,8 @@
+ extern SensorDriver ssc_light;
+ extern SensorDriver ssc_accel;
+ extern SensorDriver ssc_compass;
++extern SensorDriver ssc_gyro;
++extern SensorDriver ssc_magnetometer;
+ #endif
+ 
+ gboolean drv_check_udev_sensor_type (GUdevDevice *device, const gchar *match, const char *name);
+diff -ruN iio-ref/src/drv-ssc-gyro.c iio-new/src/drv-ssc-gyro.c
+--- a/src/drv-ssc-gyro.c	1970-01-01 08:00:00.000000000 +0800
++++ b/src/drv-ssc-gyro.c	2026-09-22 16:43:14.782447066 +0800
+@@ -0,0 +1,132 @@
++/*
++ * Copyright (c) 2023-2026
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License version 3 as published by
++ * the Free Software Foundation.
++ */
++
++#include "drivers.h"
++
++#include <fcntl.h>
++#include <unistd.h>
++#include <string.h>
++#include <errno.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <gio/gio.h>
++#include <libssc-sensor.h>
++#include <libssc-sensor-gyroscope.h>
++
++typedef struct DrvData {
++	SSCSensorGyroscope *sensor;
++	gulong measurement_id;
++} DrvData;
++
++static gboolean
++ssc_gyro_discover (GUdevDevice *device)
++{
++	g_autoptr(SSCSensorGyroscope) sensor = NULL;
++
++	/* Verify presence of FastRPC device */
++	if (!drv_check_udev_sensor_type (device, "ssc-gyro", NULL))
++		return FALSE;
++
++	/* Open and close SSC gyroscope for discovering */
++	sensor = ssc_sensor_gyroscope_new_sync (NULL, NULL);
++	if (!sensor)
++		return FALSE;
++
++	if (!ssc_sensor_gyroscope_close_sync (sensor, NULL, NULL))
++		return FALSE;
++
++	g_debug ("Found SSC gyroscope at %s", g_udev_device_get_sysfs_path (device));
++	return TRUE;
++}
++
++static void
++measurement_cb (SSCSensorGyroscope *sensor, gfloat x, gfloat y, gfloat z, gpointer user_data)
++{
++	SensorDevice *sensor_device = user_data;
++	AngularVelocityReadings readings;
++
++	readings.x = x;
++	readings.y = y;
++	readings.z = z;
++
++	sensor_device->callback_func (sensor_device, (gpointer) &readings, sensor_device->user_data);
++}
++
++static SensorDevice *
++ssc_gyro_open (GUdevDevice *device)
++{
++	g_autoptr(GError) error = NULL;
++	SensorDevice *sensor_device;
++	DrvData *drv_data;
++
++	sensor_device = g_new0 (SensorDevice, 1);
++	sensor_device->priv = g_new0 (DrvData, 1);
++
++	drv_data = (DrvData *) sensor_device->priv;
++	drv_data->sensor = ssc_sensor_gyroscope_new_sync (NULL, &error);
++	if (!drv_data->sensor)
++		g_warning ("Creating SSC gyroscope sensor failed: %s", error->message);
++	else
++		g_object_get (drv_data->sensor,
++			      SSC_SENSOR_NAME, &sensor_device->name,
++			      NULL);
++
++	return sensor_device;
++}
++
++static void
++ssc_gyro_set_polling (SensorDevice *sensor_device, gboolean state)
++{
++	DrvData *drv_data = (DrvData *) sensor_device->priv;
++	g_autoptr(GError) error = NULL;
++
++	if (state) {
++		if (drv_data->measurement_id)
++			return;
++		/* Start listening for measurements */
++		drv_data->measurement_id = g_signal_connect (drv_data->sensor,
++							     "measurement",
++							     G_CALLBACK (measurement_cb),
++							     sensor_device);
++
++		/* Enable sensor */
++		if (!ssc_sensor_gyroscope_open_sync (drv_data->sensor, NULL, &error))
++			g_warning ("Opening SSC gyroscope sensor failed: %s", error->message);
++	} else {
++		if (!drv_data->measurement_id)
++			return;
++
++		/* Stop listening for measurements */
++		g_clear_signal_handler (&drv_data->measurement_id, drv_data->sensor);
++
++		/* Disable sensor */
++		if (!ssc_sensor_gyroscope_close_sync (drv_data->sensor, NULL, &error))
++			g_warning ("Closing SSC gyroscope sensor failed: %s", error->message);
++	}
++}
++
++static void
++ssc_gyro_close (SensorDevice *sensor_device)
++{
++	DrvData *drv_data = (DrvData *) sensor_device->priv;
++
++	g_clear_object (&drv_data->sensor);
++	g_clear_pointer (&sensor_device->name, g_free);
++	g_clear_pointer (&sensor_device->priv, g_free);
++	g_free (sensor_device);
++}
++
++SensorDriver ssc_gyro = {
++	.driver_name = "SSC gyroscope sensor",
++	.type = DRIVER_TYPE_GYRO,
++
++	.discover = ssc_gyro_discover,
++	.open = ssc_gyro_open,
++	.set_polling = ssc_gyro_set_polling,
++	.close = ssc_gyro_close,
++};
+diff -ruN iio-ref/src/drv-ssc-magnetometer.c iio-new/src/drv-ssc-magnetometer.c
+--- a/src/drv-ssc-magnetometer.c	1970-01-01 08:00:00.000000000 +0800
++++ b/src/drv-ssc-magnetometer.c	2026-09-22 16:43:31.341657399 +0800
+@@ -0,0 +1,132 @@
++/*
++ * Copyright (c) 2023-2026
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License version 3 as published by
++ * the Free Software Foundation.
++ */
++
++#include "drivers.h"
++
++#include <fcntl.h>
++#include <unistd.h>
++#include <string.h>
++#include <errno.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <gio/gio.h>
++#include <libssc-sensor.h>
++#include <libssc-sensor-magnetometer.h>
++
++typedef struct DrvData {
++	SSCSensorMagnetometer *sensor;
++	gulong measurement_id;
++} DrvData;
++
++static gboolean
++ssc_magnetometer_discover (GUdevDevice *device)
++{
++	g_autoptr(SSCSensorMagnetometer) sensor = NULL;
++
++	/* Verify presence of FastRPC device */
++	if (!drv_check_udev_sensor_type (device, "ssc-magnetometer", NULL))
++		return FALSE;
++
++	/* Open and close SSC magnetometer for discovering */
++	sensor = ssc_sensor_magnetometer_new_sync (NULL, NULL);
++	if (!sensor)
++		return FALSE;
++
++	if (!ssc_sensor_magnetometer_close_sync (sensor, NULL, NULL))
++		return FALSE;
++
++	g_debug ("Found SSC magnetometer at %s", g_udev_device_get_sysfs_path (device));
++	return TRUE;
++}
++
++static void
++measurement_cb (SSCSensorMagnetometer *sensor, gfloat x, gfloat y, gfloat z, gpointer user_data)
++{
++	SensorDevice *sensor_device = user_data;
++	MagnetometerReadings readings;
++
++	readings.x = x;
++	readings.y = y;
++	readings.z = z;
++
++	sensor_device->callback_func (sensor_device, (gpointer) &readings, sensor_device->user_data);
++}
++
++static SensorDevice *
++ssc_magnetometer_open (GUdevDevice *device)
++{
++	g_autoptr(GError) error = NULL;
++	SensorDevice *sensor_device;
++	DrvData *drv_data;
++
++	sensor_device = g_new0 (SensorDevice, 1);
++	sensor_device->priv = g_new0 (DrvData, 1);
++
++	drv_data = (DrvData *) sensor_device->priv;
++	drv_data->sensor = ssc_sensor_magnetometer_new_sync (NULL, &error);
++	if (!drv_data->sensor)
++		g_warning ("Creating SSC magnetometer sensor failed: %s", error->message);
++	else
++		g_object_get (drv_data->sensor,
++			      SSC_SENSOR_NAME, &sensor_device->name,
++			      NULL);
++
++	return sensor_device;
++}
++
++static void
++ssc_magnetometer_set_polling (SensorDevice *sensor_device, gboolean state)
++{
++	DrvData *drv_data = (DrvData *) sensor_device->priv;
++	g_autoptr(GError) error = NULL;
++
++	if (state) {
++		if (drv_data->measurement_id)
++			return;
++		/* Start listening for measurements */
++		drv_data->measurement_id = g_signal_connect (drv_data->sensor,
++							     "measurement",
++							     G_CALLBACK (measurement_cb),
++							     sensor_device);
++
++		/* Enable sensor */
++		if (!ssc_sensor_magnetometer_open_sync (drv_data->sensor, NULL, &error))
++			g_warning ("Opening SSC magnetometer sensor failed: %s", error->message);
++	} else {
++		if (!drv_data->measurement_id)
++			return;
++
++		/* Stop listening for measurements */
++		g_clear_signal_handler (&drv_data->measurement_id, drv_data->sensor);
++
++		/* Disable sensor */
++		if (!ssc_sensor_magnetometer_close_sync (drv_data->sensor, NULL, &error))
++			g_warning ("Closing SSC magnetometer sensor failed: %s", error->message);
++	}
++}
++
++static void
++ssc_magnetometer_close (SensorDevice *sensor_device)
++{
++	DrvData *drv_data = (DrvData *) sensor_device->priv;
++
++	g_clear_object (&drv_data->sensor);
++	g_clear_pointer (&sensor_device->name, g_free);
++	g_clear_pointer (&sensor_device->priv, g_free);
++	g_free (sensor_device);
++}
++
++SensorDriver ssc_magnetometer = {
++	.driver_name = "SSC magnetometer sensor",
++	.type = DRIVER_TYPE_MAGNETOMETER,
++
++	.discover = ssc_magnetometer_discover,
++	.open = ssc_magnetometer_open,
++	.set_polling = ssc_magnetometer_set_polling,
++	.close = ssc_magnetometer_close,
++};
+diff -ruN iio-ref/src/iio-sensor-proxy.c iio-new/src/iio-sensor-proxy.c
+--- a/src/iio-sensor-proxy.c	2026-03-03 03:19:51.000000000 +0800
++++ b/src/iio-sensor-proxy.c	2026-09-22 16:48:58.819975270 +0800
+@@ -29,10 +29,14 @@
+ #define SENSOR_PROXY_DBUS_NAME          "net.hadess.SensorProxy"
+ #define SENSOR_PROXY_DBUS_PATH          "/net/hadess/SensorProxy"
+ #define SENSOR_PROXY_COMPASS_DBUS_PATH  "/net/hadess/SensorProxy/Compass"
++#define SENSOR_PROXY_GYRO_DBUS_PATH     "/net/hadess/SensorProxy/Gyroscope"
++#define SENSOR_PROXY_MAG_DBUS_PATH      "/net/hadess/SensorProxy/Magnetometer"
+ #define SENSOR_PROXY_IFACE_NAME         SENSOR_PROXY_DBUS_NAME
+ #define SENSOR_PROXY_COMPASS_IFACE_NAME SENSOR_PROXY_DBUS_NAME ".Compass"
++#define SENSOR_PROXY_GYRO_IFACE_NAME    SENSOR_PROXY_DBUS_NAME ".Gyroscope"
++#define SENSOR_PROXY_MAG_IFACE_NAME     SENSOR_PROXY_DBUS_NAME ".Magnetometer"
+ 
+-#define NUM_SENSOR_TYPES DRIVER_TYPE_PROXIMITY + 1
++#define NUM_SENSOR_TYPES (DRIVER_TYPE_MAGNETOMETER + 1)
+ 
+ typedef struct {
+ 	GMainLoop *loop;
+@@ -63,6 +67,13 @@
+ 	/* Compass */
+ 	gdouble previous_heading;
+ 
++	/* Gyroscope */
++	gdouble previous_gyro[3];
++	gint64 previous_gyro_emit;
++
++	/* Raw magnetometer */
++	gdouble previous_magnetometer[3];
++
+ 	/* Proximity */
+ 	gboolean previous_prox_near;
+ } SensorData;
+@@ -84,6 +95,8 @@
+ 	&ssc_light,
+ 	&ssc_accel,
+ 	&ssc_compass,
++	&ssc_gyro,
++	&ssc_magnetometer,
+ #endif
+ };
+ 
+@@ -101,6 +114,10 @@
+ 		return "compass";
+ 	case DRIVER_TYPE_PROXIMITY:
+ 		return "proximity";
++	case DRIVER_TYPE_GYRO:
++		return "gyroscope";
++	case DRIVER_TYPE_MAGNETOMETER:
++		return "magnetometer";
+ 	default:
+ 		g_assert_not_reached ();
+ 	}
+@@ -163,7 +180,9 @@
+ 		if (driver_type_exists (data, DRIVER_TYPE_ACCEL) &&
+ 		    driver_type_exists (data, DRIVER_TYPE_LIGHT) &&
+ 		    driver_type_exists (data, DRIVER_TYPE_PROXIMITY) &&
+-		    driver_type_exists (data, DRIVER_TYPE_COMPASS))
++		    driver_type_exists (data, DRIVER_TYPE_COMPASS) &&
++		    driver_type_exists (data, DRIVER_TYPE_GYRO) &&
++		    driver_type_exists (data, DRIVER_TYPE_MAGNETOMETER))
+ 			break;
+ 	}
+ 
+@@ -198,6 +217,10 @@
+ 	PROP_HAS_PROXIMITY              = 1 << 6,
+ 	PROP_PROXIMITY_NEAR             = 1 << 7,
+ 	PROP_ACCELEROMETER_TILT         = 1 << 8,
++	PROP_HAS_GYROSCOPE              = 1 << 9,
++	PROP_GYROSCOPE_READINGS         = 1 << 10,
++	PROP_HAS_MAGNETOMETER           = 1 << 11,
++	PROP_MAGNETOMETER_READINGS      = 1 << 12,
+ } PropertiesMask;
+ 
+ #define PROP_ALL (PROP_HAS_ACCELEROMETER | \
+@@ -209,6 +232,29 @@
+                   PROP_ACCELEROMETER_TILT)
+ #define PROP_ALL_COMPASS (PROP_HAS_COMPASS | \
+ 			  PROP_COMPASS_HEADING)
++#define PROP_ALL_GYRO (PROP_HAS_GYROSCOPE | \
++		       PROP_GYROSCOPE_READINGS)
++#define PROP_ALL_MAGNETOMETER (PROP_HAS_MAGNETOMETER | \
++			       PROP_MAGNETOMETER_READINGS)
++
++static const char *
++interface_for_mask (PropertiesMask mask, const char **path)
++{
++	if (mask & PROP_ALL) {
++		*path = SENSOR_PROXY_DBUS_PATH;
++		return SENSOR_PROXY_IFACE_NAME;
++	}
++	if (mask & PROP_ALL_COMPASS) {
++		*path = SENSOR_PROXY_COMPASS_DBUS_PATH;
++		return SENSOR_PROXY_COMPASS_IFACE_NAME;
++	}
++	if (mask & PROP_ALL_GYRO) {
++		*path = SENSOR_PROXY_GYRO_DBUS_PATH;
++		return SENSOR_PROXY_GYRO_IFACE_NAME;
++	}
++	*path = SENSOR_PROXY_MAG_DBUS_PATH;
++	return SENSOR_PROXY_MAG_IFACE_NAME;
++}
+ 
+ static PropertiesMask
+ mask_for_sensor_type (DriverType sensor_type)
+@@ -227,6 +273,12 @@
+ 	case DRIVER_TYPE_PROXIMITY:
+ 		return PROP_HAS_PROXIMITY |
+ 			PROP_PROXIMITY_NEAR;
++	case DRIVER_TYPE_GYRO:
++		return PROP_HAS_GYROSCOPE |
++			PROP_GYROSCOPE_READINGS;
++	case DRIVER_TYPE_MAGNETOMETER:
++		return PROP_HAS_MAGNETOMETER |
++			PROP_MAGNETOMETER_READINGS;
+ 	default:
+ 		g_assert_not_reached ();
+ 	}
+@@ -239,6 +291,7 @@
+ {
+ 	GVariantBuilder props_builder;
+ 	GVariant *props_changed = NULL;
++	const char *object_path;
+ 
+ 	g_return_if_fail (destination_bus_name != NULL);
+ 
+@@ -324,13 +377,53 @@
+ 				       g_variant_new_boolean (data->previous_prox_near));
+ 	}
+ 
+-	props_changed = g_variant_new ("(s@a{sv}@as)", (mask & PROP_ALL) ? SENSOR_PROXY_IFACE_NAME : SENSOR_PROXY_COMPASS_IFACE_NAME,
++	if (mask & PROP_HAS_GYROSCOPE) {
++		gboolean has_gyro;
++
++		has_gyro = driver_type_exists (data, DRIVER_TYPE_GYRO);
++		g_variant_builder_add (&props_builder, "{sv}", "HasGyroscope",
++				       g_variant_new_boolean (has_gyro));
++
++		/* Send the readings when the device appears */
++		if (has_gyro)
++			mask |= PROP_GYROSCOPE_READINGS;
++	}
++
++	if (mask & PROP_GYROSCOPE_READINGS) {
++		g_variant_builder_add (&props_builder, "{sv}", "GyroscopeReadings",
++				       g_variant_new ("(ddd)",
++						      data->previous_gyro[0],
++						      data->previous_gyro[1],
++						      data->previous_gyro[2]));
++	}
++
++	if (mask & PROP_HAS_MAGNETOMETER) {
++		gboolean has_magnetometer;
++
++		has_magnetometer = driver_type_exists (data, DRIVER_TYPE_MAGNETOMETER);
++		g_variant_builder_add (&props_builder, "{sv}", "HasMagnetometer",
++				       g_variant_new_boolean (has_magnetometer));
++
++		/* Send the readings when the device appears */
++		if (has_magnetometer)
++			mask |= PROP_MAGNETOMETER_READINGS;
++	}
++
++	if (mask & PROP_MAGNETOMETER_READINGS) {
++		g_variant_builder_add (&props_builder, "{sv}", "MagnetometerReadings",
++				       g_variant_new ("(ddd)",
++						      data->previous_magnetometer[0],
++						      data->previous_magnetometer[1],
++						      data->previous_magnetometer[2]));
++	}
++
++	props_changed = g_variant_new ("(s@a{sv}@as)", interface_for_mask (mask, &object_path),
+ 				       g_variant_builder_end (&props_builder),
+ 				       g_variant_new_strv (NULL, 0));
+ 
+ 	g_dbus_connection_emit_signal (data->connection,
+ 				       destination_bus_name,
+-				       (mask & PROP_ALL) ? SENSOR_PROXY_DBUS_PATH : SENSOR_PROXY_COMPASS_DBUS_PATH,
++				       object_path,
+ 				       "org.freedesktop.DBus.Properties",
+ 				       "PropertiesChanged",
+ 				       props_changed, NULL);
+@@ -347,7 +440,8 @@
+ 
+ 	g_assert (mask != 0);
+ 	g_assert (data->connection);
+-	g_assert ((mask & PROP_ALL) == 0 || (mask & PROP_ALL_COMPASS) == 0);
++	g_assert ((!!(mask & PROP_ALL) + !!(mask & PROP_ALL_COMPASS) +
++		   !!(mask & PROP_ALL_GYRO) + !!(mask & PROP_ALL_MAGNETOMETER)) <= 1);
+ 
+ 	/* Make a list of the events each client for each sensor
+ 	 * is interested in */
+@@ -385,6 +479,10 @@
+ 		send_dbus_event (data, PROP_HAS_PROXIMITY);
+ 	else if (driver_type == DRIVER_TYPE_COMPASS)
+ 		send_dbus_event (data, PROP_HAS_COMPASS);
++	else if (driver_type == DRIVER_TYPE_GYRO)
++		send_dbus_event (data, PROP_HAS_GYROSCOPE);
++	else if (driver_type == DRIVER_TYPE_MAGNETOMETER)
++		send_dbus_event (data, PROP_HAS_MAGNETOMETER);
+ 	else
+ 		g_assert_not_reached ();
+ }
+@@ -698,6 +796,134 @@
+ };
+ 
+ static void
++handle_gyro_method_call (GDBusConnection       *connection,
++			 const gchar           *sender,
++			 const gchar           *object_path,
++			 const gchar           *interface_name,
++			 const gchar           *method_name,
++			 GVariant              *parameters,
++			 GDBusMethodInvocation *invocation,
++			 gpointer               user_data)
++{
++	SensorData *data = user_data;
++	g_autoptr(GError) error = NULL;
++
++	if (g_strcmp0 (method_name, "ClaimGyroscope") != 0 &&
++	    g_strcmp0 (method_name, "ReleaseGyroscope") != 0) {
++		g_dbus_method_invocation_return_error (invocation,
++						       G_DBUS_ERROR,
++						       G_DBUS_ERROR_UNKNOWN_METHOD,
++						       "Method '%s' does not exist on object %s",
++						       method_name, object_path);
++		return;
++	}
++
++	if (!check_claim_permission (data, sender, &error)) {
++		g_dbus_method_invocation_return_gerror (invocation, error);
++		return;
++	}
++
++	handle_generic_method_call (data, sender, object_path,
++				    interface_name, method_name,
++				    parameters, invocation, DRIVER_TYPE_GYRO);
++}
++
++static GVariant *
++handle_gyro_get_property (GDBusConnection *connection,
++			  const gchar     *sender,
++			  const gchar     *object_path,
++			  const gchar     *interface_name,
++			  const gchar     *property_name,
++			  GError         **error,
++			  gpointer         user_data)
++{
++	SensorData *data = user_data;
++
++	g_assert (data->connection);
++
++	if (g_strcmp0 (property_name, "HasGyroscope") == 0)
++		return g_variant_new_boolean (driver_type_exists (data, DRIVER_TYPE_GYRO));
++	if (g_strcmp0 (property_name, "GyroscopeReadings") == 0)
++		return g_variant_new ("(ddd)",
++				      data->previous_gyro[0],
++				      data->previous_gyro[1],
++				      data->previous_gyro[2]);
++
++	return NULL;
++}
++
++static const GDBusInterfaceVTable gyro_interface_vtable =
++{
++	handle_gyro_method_call,
++	handle_gyro_get_property,
++	NULL
++};
++
++static void
++handle_magnetometer_method_call (GDBusConnection       *connection,
++				 const gchar           *sender,
++				 const gchar           *object_path,
++				 const gchar           *interface_name,
++				 const gchar           *method_name,
++				 GVariant              *parameters,
++				 GDBusMethodInvocation *invocation,
++				 gpointer               user_data)
++{
++	SensorData *data = user_data;
++	g_autoptr(GError) error = NULL;
++
++	if (g_strcmp0 (method_name, "ClaimMagnetometer") != 0 &&
++	    g_strcmp0 (method_name, "ReleaseMagnetometer") != 0) {
++		g_dbus_method_invocation_return_error (invocation,
++						       G_DBUS_ERROR,
++						       G_DBUS_ERROR_UNKNOWN_METHOD,
++						       "Method '%s' does not exist on object %s",
++						       method_name, object_path);
++		return;
++	}
++
++	if (!check_claim_permission (data, sender, &error)) {
++		g_dbus_method_invocation_return_gerror (invocation, error);
++		return;
++	}
++
++	handle_generic_method_call (data, sender, object_path,
++				    interface_name, method_name,
++				    parameters, invocation, DRIVER_TYPE_MAGNETOMETER);
++}
++
++static GVariant *
++handle_magnetometer_get_property (GDBusConnection *connection,
++				  const gchar     *sender,
++				  const gchar     *object_path,
++				  const gchar     *interface_name,
++				  const gchar     *property_name,
++				  GError         **error,
++				  gpointer         user_data)
++{
++	SensorData *data = user_data;
++
++	g_assert (data->connection);
++
++	if (g_strcmp0 (property_name, "HasMagnetometer") == 0)
++		return g_variant_new_boolean (driver_type_exists (data, DRIVER_TYPE_MAGNETOMETER));
++	if (g_strcmp0 (property_name, "MagnetometerReadings") == 0)
++		return g_variant_new ("(ddd)",
++				      data->previous_magnetometer[0],
++				      data->previous_magnetometer[1],
++				      data->previous_magnetometer[2]);
++
++	return NULL;
++}
++
++static const GDBusInterfaceVTable magnetometer_interface_vtable =
++{
++	handle_magnetometer_method_call,
++	handle_magnetometer_get_property,
++	NULL
++};
++
++static void
+ name_lost_handler (GDBusConnection *connection,
+ 		   const gchar     *name,
+ 		   gpointer         user_data)
+@@ -739,6 +965,22 @@
+ 					   NULL,
+ 					   NULL);
+ 
++	g_dbus_connection_register_object (connection,
++					   SENSOR_PROXY_GYRO_DBUS_PATH,
++					   data->introspection_data->interfaces[2],
++					   &gyro_interface_vtable,
++					   data,
++					   NULL,
++					   NULL);
++
++	g_dbus_connection_register_object (connection,
++					   SENSOR_PROXY_MAG_DBUS_PATH,
++					   data->introspection_data->interfaces[3],
++					   &magnetometer_interface_vtable,
++					   data,
++					   NULL,
++					   NULL);
++
+ 	/* Initialize DBus clients hash table before DBus is fully exposed */
+ 	data->client = g_udev_client_new (subsystems);
+ 
+@@ -786,6 +1028,8 @@
+ 
+ 	send_dbus_event (data, PROP_ALL);
+ 	send_dbus_event (data, PROP_ALL_COMPASS);
++	send_dbus_event (data, PROP_ALL_GYRO);
++	send_dbus_event (data, PROP_ALL_MAGNETOMETER);
+ 	return;
+ 
+ bail:
+@@ -948,6 +1192,53 @@
+ }
+ 
+ static void
++gyro_changed_func (SensorDevice *sensor_device,
++		   gpointer      readings_data,
++		   gpointer      user_data)
++{
++	SensorData *data = user_data;
++	AngularVelocityReadings *readings = (AngularVelocityReadings *) readings_data;
++	gint64 now;
++
++	data->previous_gyro[0] = readings->x;
++	data->previous_gyro[1] = readings->y;
++	data->previous_gyro[2] = readings->z;
++
++	maybe_notify_sensor_startup_finished (data, DRIVER_TYPE_GYRO);
++
++	/* Gyroscopes report far faster than any consumer needs; coalesce D-Bus
++	 * updates to at most one every 20ms.  previous_gyro_emit starts at 0 so
++	 * the first reading always goes out. */
++	now = g_get_monotonic_time ();
++	if (now - data->previous_gyro_emit < 20 * 1000)
++		return;
++
++	data->previous_gyro_emit = now;
++	send_dbus_event (data, PROP_GYROSCOPE_READINGS);
++}
++
++static void
++magnetometer_changed_func (SensorDevice *sensor_device,
++			   gpointer      readings_data,
++			   gpointer      user_data)
++{
++	SensorData *data = user_data;
++	MagnetometerReadings *readings = (MagnetometerReadings *) readings_data;
++
++	if (data->previous_magnetometer[0] != readings->x ||
++	    data->previous_magnetometer[1] != readings->y ||
++	    data->previous_magnetometer[2] != readings->z) {
++		data->previous_magnetometer[0] = readings->x;
++		data->previous_magnetometer[1] = readings->y;
++		data->previous_magnetometer[2] = readings->z;
++
++		send_dbus_event (data, PROP_MAGNETOMETER_READINGS);
++	}
++
++	maybe_notify_sensor_startup_finished (data, DRIVER_TYPE_MAGNETOMETER);
++}
++
++static void
+ proximity_changed_func (SensorDevice *sensor_device,
+ 			gpointer      readings_data,
+ 			gpointer      user_data)
+@@ -987,6 +1278,10 @@
+ 		return compass_changed_func;
+ 	case DRIVER_TYPE_PROXIMITY:
+ 		return proximity_changed_func;
++	case DRIVER_TYPE_GYRO:
++		return gyro_changed_func;
++	case DRIVER_TYPE_MAGNETOMETER:
++		return magnetometer_changed_func;
+ 	default:
+ 		g_assert_not_reached ();
+ 	}
+diff -ruN iio-ref/src/meson.build iio-new/src/meson.build
+--- a/src/meson.build	2026-03-03 03:19:51.000000000 +0800
++++ b/src/meson.build	2026-09-22 16:43:52.982729203 +0800
+@@ -51,6 +51,8 @@
+     'drv-ssc-light.c',
+     'drv-ssc-accel.c',
+     'drv-ssc-compass.c',
++    'drv-ssc-gyro.c',
++    'drv-ssc-magnetometer.c',
+   ]
+ endif
+ 
+diff -ruN iio-ref/src/net.hadess.SensorProxy.xml iio-new/src/net.hadess.SensorProxy.xml
+--- a/src/net.hadess.SensorProxy.xml	2026-03-03 03:19:51.000000000 +0800
++++ b/src/net.hadess.SensorProxy.xml	2026-09-22 16:44:12.766244898 +0800
+@@ -274,4 +274,107 @@
+     <method name="ReleaseCompass"/>
+ 
+   </interface>
++
++  <!--
++      net.hadess.SensorProxy.Gyroscope:
++      @short_description: D-Bus proxy to access the gyroscope
++
++      After checking the availability of the sensor type you want to monitor,
++      call the net.hadess.SensorProxy.ClaimGyroscope() method to start updating
++      the properties from the hardware readings.
++
++      The object path will be "/net/hadess/SensorProxy/Gyroscope".
++  -->
++  <interface name="net.hadess.SensorProxy.Gyroscope">
++    <!--
++        HasGyroscope:
++
++        Whether a supported gyroscope is present on the system.
++    -->
++    <property name='HasGyroscope' type='b' access='read'/>
++
++    <!--
++        GyroscopeReadings:
++
++        The angular velocity around the X, Y and Z axes in radians per second,
++        as reported by the sensor firmware.
++    -->
++    <property name='GyroscopeReadings' type='(ddd)' access='read'/>
++
++    <!--
++       ClaimGyroscope:
++
++       To start receiving gyroscope updates from the proxy the application must
++       call the net.hadess.SensorProxy.ClaimGyroscope() method. It can do so
++       whether a gyroscope is available or not, updates would then be sent when
++       such a sensor appears.
++
++       Applications should call net.hadess.SensorProxy.ReleaseGyroscope() when
++       readings are not required anymore. This prevents the sensor proxy from
++       polling the device, thus increasing wake-ups and reducing battery life.
++    -->
++    <method name="ClaimGyroscope"/>
++
++    <!--
++        ReleaseGyroscope:
++
++        This should be called as soon as readings are not required anymore. Note
++        that resources are freed up if a monitoring application exits without
++        calling net.hadess.SensorProxy.ReleaseGyroscope(), crashes or the sensor
++        disappears.
++    -->
++    <method name="ReleaseGyroscope"/>
++
++  </interface>
++
++  <!--
++      net.hadess.SensorProxy.Magnetometer:
++      @short_description: D-Bus proxy to access the raw magnetometer
++
++      After checking the availability of the sensor type you want to monitor,
++      call the net.hadess.SensorProxy.ClaimMagnetometer() method to start
++      updating the properties from the hardware readings.
++
++      The object path will be "/net/hadess/SensorProxy/Magnetometer".
++  -->
++  <interface name="net.hadess.SensorProxy.Magnetometer">
++    <!--
++        HasMagnetometer:
++
++        Whether a supported magnetometer is present on the system.
++    -->
++    <property name='HasMagnetometer' type='b' access='read'/>
++
++    <!--
++        MagnetometerReadings:
++
++        The magnetic field along the X, Y and Z axes in microtesla, as reported
++        by the sensor firmware (raw, uncalibrated values included).
++    -->
++    <property name='MagnetometerReadings' type='(ddd)' access='read'/>
++
++    <!--
++       ClaimMagnetometer:
++
++       To start receiving magnetometer updates from the proxy the application
++       must call the net.hadess.SensorProxy.ClaimMagnetometer() method. It can
++       do so whether a magnetometer is available or not, updates would then be
++       sent when such a sensor appears.
++
++       Applications should call net.hadess.SensorProxy.ReleaseMagnetometer()
++       when readings are not required anymore.
++    -->
++    <method name="ClaimMagnetometer"/>
++
++    <!--
++        ReleaseMagnetometer:
++
++        This should be called as soon as readings are not required anymore. Note
++        that resources are freed up if a monitoring application exits without
++        calling net.hadess.SensorProxy.ReleaseMagnetometer(), crashes or the
++        sensor disappears.
++    -->
++    <method name="ReleaseMagnetometer"/>
++
++  </interface>
+ </node>

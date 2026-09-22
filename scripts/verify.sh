@@ -81,6 +81,38 @@ compass_heading=$(busctl get-property \
 	CompassHeading | awk '{print $2}')
 echo "HasCompass=true, heading=$compass_heading"
 
+has_gyroscope=$(busctl get-property \
+	net.hadess.SensorProxy \
+	/net/hadess/SensorProxy/Gyroscope \
+	net.hadess.SensorProxy.Gyroscope \
+	HasGyroscope | awk '{print $2}')
+[ "$has_gyroscope" = true ] || {
+	echo "desktop sensor API has no gyroscope" >&2
+	exit 1
+}
+gyroscope_readings=$(busctl get-property \
+	net.hadess.SensorProxy \
+	/net/hadess/SensorProxy/Gyroscope \
+	net.hadess.SensorProxy.Gyroscope \
+	GyroscopeReadings | awk '{print $2, $3, $4}')
+echo "HasGyroscope=true, readings=$gyroscope_readings"
+
+has_magnetometer=$(busctl get-property \
+	net.hadess.SensorProxy \
+	/net/hadess/SensorProxy/Magnetometer \
+	net.hadess.SensorProxy.Magnetometer \
+	HasMagnetometer | awk '{print $2}')
+[ "$has_magnetometer" = true ] || {
+	echo "desktop sensor API has no magnetometer" >&2
+	exit 1
+}
+magnetometer_readings=$(busctl get-property \
+	net.hadess.SensorProxy \
+	/net/hadess/SensorProxy/Magnetometer \
+	net.hadess.SensorProxy.Magnetometer \
+	MagnetometerReadings | awk '{print $2, $3, $4}')
+echo "HasMagnetometer=true, readings=$magnetometer_readings"
+
 errors=$(journalctl -b --no-pager | grep -Eic \
 	'crash detected in slpi|Unhandled context fault|USER-PD DOG|attach sensors PD timed out|watchdog' || true)
 [ "$errors" -eq 0 ] || {

@@ -11,6 +11,9 @@ dropin=$dropin_dir/nabu-ssc.conf
 rule=/etc/udev/rules.d/90-nabu-ssc-accelerometer.rules
 legacy_identity_rule_sha256=dcc04b9147f0f162b208334c5c4658b70b4e26384fa968a0632cd7468a387761
 legacy_accelerometer_only_rule_sha256=95b011f5634b7ced33e03b90144d5f7f273dd29cad3dcacbb09b83c588ab91f3
+legacy_motion_rule_sha256=0862d933b1a9b89d624864638b96024030bba561ba4af76dc8858b78084479e0
+dbusconf=/usr/share/dbus-1/system.d/net.hadess.SensorProxy.conf
+dbusconf_source=
 
 usage()
 {
@@ -29,9 +32,10 @@ dropin_source=$script_dir/../config/nabu-ssc-iio-sensor-proxy.conf
 rule_source=$script_dir/../config/90-nabu-ssc-accelerometer.rules
 light_patch=$script_dir/../patches/0002-ssc-light-filter.patch
 light_filter=$script_dir/../userspace/nabu-light-filter.h
+gyro_patch=$script_dir/../patches/0003-ssc-gyroscope-magnetometer.patch
 archive=
 
-for source in "$dropin_source" "$rule_source" "$light_patch" "$light_filter"; do
+for source in "$dropin_source" "$rule_source" "$light_patch" "$light_filter" "$gyro_patch"; do
 	[ -f "$source" ] || {
 		echo "missing packaged configuration: $source" >&2
 		exit 1
@@ -76,7 +80,7 @@ fi
 if [ -e "$rule" ] && ! cmp -s "$rule" "$rule_source"; then
 	installed_rule_sha256=$(sha256sum "$rule" | cut -d ' ' -f 1)
 	case $installed_rule_sha256 in
-	"$legacy_identity_rule_sha256"|"$legacy_accelerometer_only_rule_sha256")
+	"$legacy_identity_rule_sha256"|"$legacy_accelerometer_only_rule_sha256"|"$legacy_motion_rule_sha256")
 		;;
 	*)
 		echo "refusing to replace unexpected udev rule: $rule" >&2
@@ -85,7 +89,7 @@ if [ -e "$rule" ] && ! cmp -s "$rule" "$rule_source"; then
 	esac
 fi
 if [ -e "$binary" ]; then
-	for backend in accelerometer light compass; do
+	for backend in accelerometer light compass gyroscope magnetometer; do
 		strings "$binary" | grep -Fq "SSC $backend sensor" || {
 			echo "existing binary lacks the SSC $backend backend: $binary" >&2
 			exit 1
@@ -116,6 +120,7 @@ if [ -n "$archive" ]; then
 	tar -xzf "$archive" --strip-components=1 -C "$source_dir"
 	patch --batch --fuzz=0 -d "$source_dir" -p1 < "$light_patch"
 	install -m 0644 "$light_filter" "$source_dir/src/nabu-light-filter.h"
+	patch --batch --fuzz=0 -d "$source_dir" -p1 < "$gyro_patch"
 
 	meson setup "$build_dir" "$source_dir" \
 		--prefix=/usr/local \
@@ -129,6 +134,7 @@ if [ -n "$archive" ]; then
 	meson compile -C "$build_dir"
 
 	built_binary=$build_dir/src/iio-sensor-proxy
+	dbusconf_source=$build_dir/data/net.hadess.SensorProxy.conf
 	strings "$built_binary" | grep -Fq 'Nabu SSC light filter v2 enabled' || {
 		echo "built binary lacks the Nabu light filter" >&2
 		exit 1
@@ -141,7 +147,7 @@ if [ -n "$archive" ]; then
 		echo "built binary does not link to libssc" >&2
 		exit 1
 	}
-	for backend in accelerometer light compass; do
+	for backend in accelerometer light compass gyroscope magnetometer; do
 		strings "$built_binary" | grep -Fq "SSC $backend sensor" || {
 			echo "built binary does not contain the SSC $backend backend" >&2
 			exit 1
@@ -160,6 +166,19 @@ else
 	fi
 fi
 
+if [ -n "$dbusconf_source" ]; then
+	install -d -o root -g root -m 0755 "$(dirname -- "$dbusconf")"
+	install -o root -g root -m 0644 "$dbusconf_source" "$dbusconf"
+	systemctl reload dbus 2>/dev/null || systemctl restart dbus
+fi
+for iface in Gyroscope Magnetometer; do
+	grep -Fq "send_interface=\"net.hadess.SensorProxy.$iface\"" "$dbusconf" || {
+		echo "installed D-Bus policy does not allow the $iface interface: $dbusconf" >&2
+		echo "rebuild iio-sensor-proxy with $expected_archive to install it" >&2
+		exit 1
+	}
+done
+
 install -d -o root -g root -m 0755 "$dropin_dir" /etc/udev/rules.d
 install -o root -g root -m 0644 "$dropin_source" "$dropin"
 install -o root -g root -m 0644 "$rule_source" "$rule"
@@ -172,11 +191,12 @@ systemctl restart iio-sensor-proxy.service
 
 systemctl is-active --quiet iio-sensor-proxy.service
 udevadm info --query=property --path=/sys/class/misc/fastrpc-sdsp | \
-	grep -Fqx 'IIO_SENSOR_PROXY_TYPE=ssc-accel ssc-light ssc-compass'
+	grep -Fqx 'IIO_SENSOR_PROXY_TYPE=ssc-accel ssc-light ssc-compass ssc-gyro ssc-magnetometer'
 
 echo "installed iio-sensor-proxy $version with Qualcomm SSC support: $binary"
 [ -z "$archive" ] || echo "source SHA256: $actual_sha256"
-echo "installed Nabu accelerometer, light, and compass udev opt-in: $rule"
+echo "installed Nabu accelerometer, light, compass, gyroscope, and magnetometer udev opt-in: $rule"
+echo "installed D-Bus policy: $dbusconf"
 echo "installed reversible systemd override: $dropin"
 echo "the distribution iio-sensor-proxy binary was preserved"
 echo "SSC iio-sensor-proxy installation complete"

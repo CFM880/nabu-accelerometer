@@ -26,7 +26,9 @@ SLPI, not an AP QUP controller.
 - libssc: `https://codeberg.org/DylanVanAssche/libssc`, version 0.4.4
 - iio-sensor-proxy: upstream version 3.9 with SSC backend, plus local
   `patches/0002-ssc-light-filter.patch` and `userspace/nabu-light-filter.h`
-  for ambient-light smoothing and hysteresis (the pinned archive is unchanged)
+  for ambient-light smoothing and hysteresis, and
+  `patches/0003-ssc-gyroscope-magnetometer.patch` for the gyroscope and raw
+  magnetometer D-Bus interfaces (the pinned archive is unchanged)
 
 Pinned archives are vendored under `third_party/`:
 
@@ -41,6 +43,8 @@ SHA256: af5edd307dcfa52dc3a242d13b7cc756e90a71640caf332efbad960e21649ae4
 The install hook verifies the SHA256, extracts the archive and builds it under
 `third_party/build/` (`libssc/` and `iio-sensor-proxy/`), applies
 `patches/0002-ssc-light-filter.patch` and `userspace/nabu-light-filter.h` to
-iio-sensor-proxy, and only rebuilds a component that is missing or out of date.
-An explicit archive placed in the artifacts directory takes precedence over the
-vendored one.
+iio-sensor-proxy, applies `patches/0003-ssc-gyroscope-magnetometer.patch`, and
+only rebuilds a component that is missing or out of date. The generated
+`net.hadess.SensorProxy.conf` D-Bus policy is installed over the distribution
+file. An explicit archive placed in the artifacts directory takes precedence
+over the vendored one.

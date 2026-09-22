@@ -93,12 +93,22 @@ sudo bash scripts/verify.sh 20   # 每种 SSC 传感器额外采样 20 秒
 
 - 四个 remoteproc 都为 `running`；
 - `hexagonrpcd` 和 `iio-sensor-proxy` 为 active，`NRestarts=0`；
-- D-Bus 返回 `HasAccelerometer=true`、`HasAmbientLight=true` 和
-  `HasCompass=true`；
+- D-Bus 返回 `HasAccelerometer=true`、`HasAmbientLight=true`、`HasCompass=true`、
+  `HasGyroscope=true` 和 `HasMagnetometer=true`；
 - 日志没有 SLPI crash、USER-PD watchdog、attach timeout 或 IOMMU fault。
 
 桌面接口使用 LSM6DSO 加速度计、TCS3701 环境光传感器和基于 Qualcomm Rotation
-Vector 的罗盘。libssc CLI 还可以直接读取 LSM6DSO 陀螺仪和 AK0991x 磁力计：
+Vector 的罗盘。LSM6DSO 陀螺仪和 AK0991x 原始磁力计另外通过独立的 D-Bus 接口导出：
+
+```text
+net.hadess.SensorProxy.Gyroscope    /net/hadess/SensorProxy/Gyroscope
+net.hadess.SensorProxy.Magnetometer /net/hadess/SensorProxy/Magnetometer
+```
+
+各自提供 `HasGyroscope`/`HasMagnetometer`、`(ddd)` 类型的
+`GyroscopeReadings`/`MagnetometerReadings`（分别为 rad/s 与 µT，取自固件原始值）
+以及 `Claim`/`Release` 方法，复用与罗盘相同的 claim/引用计数模型。陀螺仪最高约
+26 Hz，其 D-Bus 更新被合并为最多每 20 ms 一次。libssc CLI 仍可直接读取两者：
 
 ```sh
 ssccli --sensor gyroscope --timeout 10

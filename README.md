@@ -96,12 +96,23 @@ A final boot on real hardware should satisfy:
 
 - all four remoteprocs are `running`;
 - `hexagonrpcd` and `iio-sensor-proxy` are active with `NRestarts=0`;
-- D-Bus returns `HasAccelerometer=true`, `HasAmbientLight=true`, and `HasCompass=true`;
+- D-Bus returns `HasAccelerometer=true`, `HasAmbientLight=true`, `HasCompass=true`,
+  `HasGyroscope=true`, and `HasMagnetometer=true`;
 - the log has no SLPI crash, USER-PD watchdog, attach timeout, or IOMMU fault.
 
 The desktop interfaces use the LSM6DSO accelerometer, the TCS3701 ambient light sensor, and a
-compass based on the Qualcomm Rotation Vector. The libssc CLI can also read the LSM6DSO gyroscope
-and the AK0991x magnetometer directly:
+compass based on the Qualcomm Rotation Vector. The LSM6DSO gyroscope and the AK0991x raw
+magnetometer are additionally exported as separate D-Bus interfaces:
+
+```text
+net.hadess.SensorProxy.Gyroscope    /net/hadess/SensorProxy/Gyroscope
+net.hadess.SensorProxy.Magnetometer /net/hadess/SensorProxy/Magnetometer
+```
+
+Each exposes `HasGyroscope`/`HasMagnetometer`, a `(ddd)` `GyroscopeReadings`/`MagnetometerReadings`
+property (rad/s and µT, as reported by the firmware) and `Claim`/`Release` methods, following the
+same claim/refcount model as the compass. Because the gyroscope streams at up to 26 Hz, its D-Bus
+updates are coalesced to at most one per 20 ms. The libssc CLI can still read both sensors directly:
 
 ```sh
 ssccli --sensor gyroscope --timeout 10
