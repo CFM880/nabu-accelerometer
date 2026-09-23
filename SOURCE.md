@@ -48,3 +48,5 @@ only rebuilds a component that is missing or out of date. The generated
 `net.hadess.SensorProxy.conf` D-Bus policy is installed over the distribution
 file. An explicit archive placed in the artifacts directory takes precedence
 over the vendored one.
+
+The kernel is reset to the clean upstream base `b9d5d463c216763cec719c04536ea9e14512cad4` (Linux 6.14.11) by `nabu-main`, not to this NABU baseline: the port commits in between are carried as module overlays.
