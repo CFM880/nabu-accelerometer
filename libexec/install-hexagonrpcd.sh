@@ -52,6 +52,15 @@ fi
 # the static sensors PD on SLPI, exposed by the upstream kernel as sdsp.
 apt-get install --no-install-recommends -y hexagonrpcd
 
+# hexagonrpcd pulls in protection-domain-mapper, whose userspace pd-mapper
+# daemon registers the same tms/servreg locator service as the kernel
+# qcom_pd_mapper.  The kernel driver carries the sm8150 domain table (including
+# the SLPI root and sensor PDs), while the userspace daemon has no firmware
+# JSON database installed here and would answer with empty domain lists,
+# breaking SLPI root-PD discovery.  Keep the userspace daemon disabled.
+systemctl disable --now pd-mapper.service 2>/dev/null || true
+systemctl mask pd-mapper.service 2>/dev/null || true
+
 install -d -o root -g root -m 0755 "$dropin_dir"
 
 install -o root -g root -m 0644 "$dropin_source" "$dropin"
