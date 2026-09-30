@@ -25,7 +25,7 @@ command -v "$compiler" >/dev/null 2>&1 || {
 rm -f -- "$temporary"
 "$compiler" -std=c11 -O2 -Wall -Wextra -Werror \
 	-Wl,-z,relro,-z,now \
-	-o "$temporary" "$source_file"
+	-o "$temporary" "$source_file" -lsystemd
 chmod 0755 "$temporary"
 mv -f -- "$temporary" "$destination"
 
