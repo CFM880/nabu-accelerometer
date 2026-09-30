@@ -1,0 +1,37 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# Quiesce/recover the Nabu FastRPC sensor server around system suspend.
+#
+# The SLPI keeps running across s2idle.  While hexagonrpcd's FastRPC session
+# is live, the SLPI's sensor_process crashes in its FastRPC path when the AP
+# suspends:
+#
+#   PDM: service 'sensor_process' crash: 'EX:sensor_process:0x1:frpc_dsp:0x6d:PC=...'
+#   qcom_q6v5_pas 2400000.remoteproc: fatal error received: ...:frpc_dsp:...
+#   remoteproc0: crash detected in slpi: type fatal error
+#
+# That reset makes iio-sensor-proxy exit or segfault, and every restart of the
+# proxy drops net.hadess.SensorProxy, so Mutter loses the accelerometer claim
+# and panel rotation.  libssc talks to the SLPI over QRTR and does not need
+# FastRPC once the sensors PD is attached, so stopping hexagonrpcd for the
+# sleep keeps the sensor data and Mutter's claim alive while giving the DSP no
+# FastRPC session to crash in.
+set -u
+
+case "${1:-}" in
+stop)
+	systemctl stop hexagonrpcd.service || true
+	;;
+start)
+	# hexagonrpcd was stopped for the sleep.  iio-sensor-proxy is left
+	# alone: "start" is a no-op on a running unit, so a clean resume keeps
+	# Mutter's claim and rotation, and it is only restarted if it really
+	# died.
+	systemctl start hexagonrpcd.service iio-sensor-proxy.service || true
+	;;
+*)
+	echo "usage: $0 {stop|start}" >&2
+	exit 2
+	;;
+esac
