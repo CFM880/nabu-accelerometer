@@ -7,6 +7,7 @@
 #include <linux/input-event-codes.h>
 #include <linux/input.h>
 #include <linux/uinput.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -23,10 +24,11 @@
 #define ACCEL_SERVICE "net.hadess.SensorProxy"
 #define ACCEL_INTERFACE "net.hadess.SensorProxy"
 
-/* Shell poll / bus wait granularity, and fallback if no Claim ever arrives. */
-#define POLL_USEC 200000ULL		/* 200 ms */
+/* Event-loop timeout; only used to re-check the fallback deadlines. */
+#define IDLE_TIMEOUT_MS 1000		/* 1 s */
 #define CLAIM_TIMEOUT_USEC 30000000ULL	/* 30 s: accelerometer proxy absent */
 #define MONITOR_RETRY_USEC 5000000ULL
+#define LOGIND_RETRY_USEC 5000000ULL
 
 static volatile sig_atomic_t stopping;
 
@@ -43,19 +45,6 @@ static uint64_t now_us(void)
 	clock_gettime(CLOCK_MONOTONIC, &ts);
 	return (uint64_t)ts.tv_sec * 1000000ULL +
 	       (uint64_t)ts.tv_nsec / 1000ULL;
-}
-
-static int sleep_us(uint64_t usec)
-{
-	struct timespec delay = {
-		.tv_sec = (time_t)(usec / 1000000ULL),
-		.tv_nsec = (long)((usec % 1000000ULL) * 1000ULL),
-	};
-
-	while (!stopping && nanosleep(&delay, &delay) < 0 && errno == EINTR)
-		;
-
-	return stopping ? -1 : 0;
 }
 
 static int emit_event(int fd, unsigned short type, unsigned short code,
@@ -91,81 +80,130 @@ enum shell_state {
 	SHELL_USER,
 };
 
-static enum shell_state current_shell_state(void)
+/*
+ * Track the graphical session through systemd-logind instead of scanning
+ * /proc.  Mutter only follows orientation after it has itself claimed the
+ * sensor, and every new shell instance (greeter or user) needs its own
+ * OFF -> ON edge, so the switch must be reset whenever the graphical session
+ * changes.  logind announces that with SessionNew/SessionRemoved and tags each
+ * session with a Class ("greeter"/"user") and a Type ("wayland"/"x11" for
+ * graphical sessions, "tty"/"unspecified" otherwise) -- exactly the
+ * distinction the old /proc scan derived from "gnome-shell --mode=gdm".
+ */
+static sd_bus *logind_bus;
+static bool logind_dirty;
+
+static enum shell_state query_shell_state(sd_bus *bus)
 {
-	struct dirent *entry;
-	DIR *proc;
-	enum shell_state state = SHELL_NONE;
+	sd_bus_error error = SD_BUS_ERROR_NULL;
+	sd_bus_message *reply = NULL;
+	enum shell_state result = SHELL_NONE;
+	int r;
 
-	proc = opendir("/proc");
-	if (!proc)
+	r = sd_bus_call_method(bus,
+			       "org.freedesktop.login1",
+			       "/org/freedesktop/login1",
+			       "org.freedesktop.login1.Manager",
+			       "ListSessions", &error, &reply, "");
+	if (r < 0) {
+		fprintf(stderr, DEVICE_NAME ": ListSessions: %s\n",
+			error.message ? error.message : strerror(-r));
+		sd_bus_error_free(&error);
 		return SHELL_NONE;
+	}
+	sd_bus_error_free(&error);
 
-	while ((entry = readdir(proc))) {
-		char path[64];
-		char cmdline[256];
-		char comm[32];
-		struct stat statbuf;
-		ssize_t cmdline_length;
-		ssize_t length;
-		int comm_fd;
-		int cmdline_fd;
-		char *end;
-		long pid;
+	r = sd_bus_message_enter_container(reply, 'a', "(susso)");
+	if (r < 0)
+		goto out;
 
-		pid = strtol(entry->d_name, &end, 10);
-		if (*entry->d_name == '\0' || *end != '\0' || pid <= 0)
-			continue;
+	while ((r = sd_bus_message_enter_container(reply, 'r', NULL)) > 0) {
+		const char *id, *user, *seat, *path;
+		char *cls = NULL;
+		char *type = NULL;
+		uint32_t uid;
+		bool graphical;
 
-		(void)snprintf(path, sizeof(path), "/proc/%ld", pid);
-		if (stat(path, &statbuf) < 0 || statbuf.st_uid < 1000 ||
-		    statbuf.st_uid == 65534)
-			continue;
+		if (sd_bus_message_read(reply, "susso", &id, &uid, &user,
+					&seat, &path) < 0)
+			break;
 
-		(void)snprintf(path, sizeof(path), "/proc/%ld/comm", pid);
-		comm_fd = open(path, O_RDONLY | O_CLOEXEC);
-		if (comm_fd < 0)
-			continue;
-		length = read(comm_fd, comm, sizeof(comm) - 1);
-		close(comm_fd);
-		if (length <= 0)
-			continue;
-		comm[length] = '\0';
-		if (strcmp(comm, "gnome-shell\n") != 0 &&
-		    strcmp(comm, "gnome-shell") != 0)
-			continue;
+		(void)sd_bus_get_property_string(bus, "org.freedesktop.login1",
+						 path, "org.freedesktop.login1.Session",
+						 "Type", NULL, &type);
+		graphical = type != NULL &&
+			    (strcmp(type, "wayland") == 0 ||
+			     strcmp(type, "x11") == 0);
+		free(type);
 
-		/*
-		 * GDM also runs gnome-shell, commonly under a dynamically
-		 * allocated UID above 1000.  The greeter still needs the same
-		 * laptop -> tablet transition as a user session: its Mutter
-		 * instance ignores the first accelerometer reading while it
-		 * initializes the native panel orientation, so without a later
-		 * OFF -> ON edge the login screen never rotates.  Report the
-		 * greeter separately so main() can restart the cycle when the
-		 * user session replaces it.
-		 */
-		state = SHELL_USER;
-		(void)snprintf(path, sizeof(path), "/proc/%ld/cmdline", pid);
-		cmdline_fd = open(path, O_RDONLY | O_CLOEXEC);
-		if (cmdline_fd >= 0) {
-			cmdline_length = read(cmdline_fd, cmdline,
-					      sizeof(cmdline));
-			close(cmdline_fd);
-			if (cmdline_length > 0 &&
-			    memmem(cmdline, (size_t)cmdline_length,
-				   "--mode=gdm", strlen("--mode=gdm"))) {
-				state = SHELL_GREETER;
-				continue;
+		if (graphical) {
+			(void)sd_bus_get_property_string(bus, "org.freedesktop.login1",
+							 path,
+							 "org.freedesktop.login1.Session",
+							 "Class", NULL, &cls);
+			if (cls != NULL) {
+				if (strcmp(cls, "user") == 0)
+					result = SHELL_USER;
+				else if (strcmp(cls, "greeter") == 0 &&
+					 result != SHELL_USER)
+					result = SHELL_GREETER;
+				free(cls);
 			}
 		}
 
-		/* A real user session takes priority over the greeter. */
-		break;
+		sd_bus_message_exit_container(reply);
 	}
 
-	closedir(proc);
-	return state;
+out:
+	sd_bus_message_unref(reply);
+	return result;
+}
+
+static int on_logind_event(sd_bus_message *message, void *userdata,
+			   sd_bus_error *ret_error)
+{
+	(void)message;
+	(void)userdata;
+	(void)ret_error;
+	logind_dirty = true;
+	printf(DEVICE_NAME ": logind session event\n");
+	fflush(stdout);
+	return 0;
+}
+
+static int start_logind_watch(void)
+{
+	sd_bus *bus = NULL;
+	int r;
+
+	r = sd_bus_open_system(&bus);
+	if (r < 0) {
+		fprintf(stderr, DEVICE_NAME ": sd_bus_open_system (logind): %s\n",
+			strerror(-r));
+		return r;
+	}
+
+	r = sd_bus_match_signal(bus, NULL, NULL, "/org/freedesktop/login1",
+				"org.freedesktop.login1.Manager",
+				"SessionNew", on_logind_event, NULL);
+	if (r < 0)
+		goto fail;
+	r = sd_bus_match_signal(bus, NULL, NULL, "/org/freedesktop/login1",
+				"org.freedesktop.login1.Manager",
+				"SessionRemoved", on_logind_event, NULL);
+	if (r < 0)
+		goto fail;
+
+	logind_bus = bus;
+	logind_dirty = true;
+	printf(DEVICE_NAME ": watching logind sessions\n");
+	fflush(stdout);
+	return 0;
+
+fail:
+	fprintf(stderr, DEVICE_NAME ": logind watch: %s\n", strerror(-r));
+	sd_bus_unref(bus);
+	return r;
 }
 
 /*
@@ -265,6 +303,37 @@ static const char *drain_claim_monitor(char sender[64])
 	return have_sender ? sender : NULL;
 }
 
+/*
+ * Block until either bus has something to process (or the timeout expires).
+ * Both connections are polled together so a session change is handled as soon
+ * as logind announces it, without a fixed /proc polling cadence.
+ */
+static int wait_for_events(int timeout_ms)
+{
+	struct pollfd fds[2];
+	nfds_t nfds = 0;
+
+	if (claim_monitor) {
+		fds[nfds].fd = sd_bus_get_fd(claim_monitor);
+		fds[nfds].events = (short)sd_bus_get_events(claim_monitor);
+		fds[nfds].revents = 0;
+		nfds++;
+	}
+	if (logind_bus) {
+		fds[nfds].fd = sd_bus_get_fd(logind_bus);
+		fds[nfds].events = (short)sd_bus_get_events(logind_bus);
+		fds[nfds].revents = 0;
+		nfds++;
+	}
+
+	if (poll(fds, nfds, timeout_ms) < 0 && errno != EINTR) {
+		perror(DEVICE_NAME ": poll");
+		return -1;
+	}
+
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
 	struct uinput_setup setup = {
@@ -281,12 +350,14 @@ int main(int argc, char **argv)
 	int fd;
 	int status = EXIT_FAILURE;
 	enum shell_state state = SHELL_NONE;
+	enum shell_state current = SHELL_NONE;
 	bool enabled = false;
 	bool waiting = false;
 	char last_sender[64] = "";
 	char sender[64];
 	uint64_t wait_deadline = 0;
 	uint64_t monitor_retry_at = 0;
+	uint64_t logind_retry_at = 0;
 
 	if (argc != 1) {
 		fprintf(stderr, "usage: %s\n", argv[0]);
@@ -334,15 +405,36 @@ int main(int argc, char **argv)
 	if (start_claim_monitor() < 0)
 		monitor_retry_at = now_us() + MONITOR_RETRY_USEC;
 
+	if (start_logind_watch() < 0)
+		logind_retry_at = now_us() + LOGIND_RETRY_USEC;
+
 	while (!stopping) {
-		enum shell_state current = current_shell_state();
 		const char *claimer;
+		int r;
+
+		if (logind_bus) {
+			while ((r = sd_bus_process(logind_bus, NULL)) > 0)
+				;
+			if (r < 0) {
+				fprintf(stderr, DEVICE_NAME ": logind bus lost: %s\n",
+					strerror(-r));
+				sd_bus_unref(logind_bus);
+				logind_bus = NULL;
+				logind_retry_at = now_us() + LOGIND_RETRY_USEC;
+			}
+		}
+
+		if (logind_dirty) {
+			current = logind_bus ? query_shell_state(logind_bus)
+					     : SHELL_NONE;
+			logind_dirty = false;
+		}
 
 		/*
-		 * Restart the laptop -> tablet cycle whenever the active shell
-		 * changes, e.g. when the user session replaces the greeter.
-		 * Each Mutter instance needs its own OFF -> ON edge while the
-		 * accelerometer is already present.
+		 * Restart the laptop -> tablet cycle whenever the graphical
+		 * session changes, e.g. when the user session replaces the
+		 * greeter.  Each Mutter instance needs its own OFF -> ON edge
+		 * while the accelerometer is already present.
 		 */
 		if (current != state) {
 			state = current;
@@ -352,7 +444,7 @@ int main(int argc, char **argv)
 					goto out_destroy;
 				}
 				enabled = false;
-				printf(DEVICE_NAME ": SW_TABLET_MODE=OFF; graphical shell changed\n");
+				printf(DEVICE_NAME ": SW_TABLET_MODE=OFF; graphical session changed\n");
 				fflush(stdout);
 			}
 			waiting = (state != SHELL_NONE);
@@ -389,11 +481,13 @@ int main(int argc, char **argv)
 			(void)start_claim_monitor();
 			monitor_retry_at = now_us() + MONITOR_RETRY_USEC;
 		}
+		if (logind_bus == NULL && now_us() >= logind_retry_at) {
+			(void)start_logind_watch();
+			logind_retry_at = now_us() + LOGIND_RETRY_USEC;
+		}
 
-		if (claim_monitor != NULL)
-			(void)sd_bus_wait(claim_monitor, POLL_USEC);
-		else
-			(void)sleep_us(POLL_USEC);
+		if (wait_for_events(IDLE_TIMEOUT_MS) < 0)
+			break;
 	}
 
 	status = EXIT_SUCCESS;
@@ -404,6 +498,7 @@ out_destroy:
 	if (ioctl(fd, UI_DEV_DESTROY) < 0)
 		perror("destroy uinput tablet switch");
 	sd_bus_unref(claim_monitor);
+	sd_bus_unref(logind_bus);
 out_close:
 	close(fd);
 	return status;
