@@ -29,6 +29,9 @@
 #define CLAIM_TIMEOUT_USEC 30000000ULL	/* 30 s: accelerometer proxy absent */
 #define MONITOR_RETRY_USEC 5000000ULL
 #define LOGIND_RETRY_USEC 5000000ULL
+/* Wait for the new session's shell to start before resetting the switch. */
+#define SHELL_WAIT_USEC 5000000ULL
+#define SHELL_WAIT_POLL_MS 100
 
 static volatile sig_atomic_t stopping;
 
@@ -93,12 +96,14 @@ enum shell_state {
 static sd_bus *logind_bus;
 static bool logind_dirty;
 
-static enum shell_state query_shell_state(sd_bus *bus)
+static enum shell_state query_shell_state(sd_bus *bus, uint32_t *ret_uid)
 {
 	sd_bus_error error = SD_BUS_ERROR_NULL;
 	sd_bus_message *reply = NULL;
 	enum shell_state result = SHELL_NONE;
 	int r;
+
+	*ret_uid = 0;
 
 	r = sd_bus_call_method(bus,
 			       "org.freedesktop.login1",
@@ -142,11 +147,14 @@ static enum shell_state query_shell_state(sd_bus *bus)
 							 "org.freedesktop.login1.Session",
 							 "Class", NULL, &cls);
 			if (cls != NULL) {
-				if (strcmp(cls, "user") == 0)
+				if (strcmp(cls, "user") == 0) {
 					result = SHELL_USER;
-				else if (strcmp(cls, "greeter") == 0 &&
-					 result != SHELL_USER)
+					*ret_uid = uid;
+				} else if (strcmp(cls, "greeter") == 0 &&
+					   result != SHELL_USER) {
 					result = SHELL_GREETER;
+					*ret_uid = uid;
+				}
 				free(cls);
 			}
 		}
@@ -157,6 +165,66 @@ static enum shell_state query_shell_state(sd_bus *bus)
 out:
 	sd_bus_message_unref(reply);
 	return result;
+}
+
+/*
+ * Is a gnome-shell for the given session UID running yet?
+ *
+ * logind announces a session as soon as it is created, which is a couple of
+ * seconds before its gnome-shell starts.  Resetting the tablet switch at that
+ * point would make the *previous* shell -- still on screen -- fall back to the
+ * panel's builtin orientation, i.e. the login screen flashes portrait until
+ * the new shell takes over.  Wait for the new shell to actually appear before
+ * flipping the switch: the old shell is never disturbed and the new Mutter
+ * still sees the switch OFF before it claims.
+ *
+ * This scan only runs while a session change is pending, so the steady state
+ * stays event driven.
+ */
+static bool shell_present(uint32_t uid)
+{
+	struct dirent *entry;
+	DIR *proc;
+	bool found = false;
+
+	proc = opendir("/proc");
+	if (!proc)
+		return false;
+
+	while (!found && (entry = readdir(proc))) {
+		char path[64];
+		char comm[32];
+		struct stat statbuf;
+		ssize_t length;
+		int comm_fd;
+		char *end;
+		long pid;
+
+		pid = strtol(entry->d_name, &end, 10);
+		if (*entry->d_name == '\0' || *end != '\0' || pid <= 0)
+			continue;
+
+		(void)snprintf(path, sizeof(path), "/proc/%ld", pid);
+		if (stat(path, &statbuf) < 0 ||
+		    (uint32_t)statbuf.st_uid != uid)
+			continue;
+
+		(void)snprintf(path, sizeof(path), "/proc/%ld/comm", pid);
+		comm_fd = open(path, O_RDONLY | O_CLOEXEC);
+		if (comm_fd < 0)
+			continue;
+		length = read(comm_fd, comm, sizeof(comm) - 1);
+		close(comm_fd);
+		if (length <= 0)
+			continue;
+		comm[length] = '\0';
+		if (strcmp(comm, "gnome-shell\n") == 0 ||
+		    strcmp(comm, "gnome-shell") == 0)
+			found = true;
+	}
+
+	closedir(proc);
+	return found;
 }
 
 static int on_logind_event(sd_bus_message *message, void *userdata,
@@ -358,6 +426,9 @@ int main(int argc, char **argv)
 	uint64_t wait_deadline = 0;
 	uint64_t monitor_retry_at = 0;
 	uint64_t logind_retry_at = 0;
+	enum shell_state pending_state = SHELL_NONE;
+	uint32_t pending_uid = 0;
+	uint64_t pending_deadline = 0;
 
 	if (argc != 1) {
 		fprintf(stderr, "usage: %s\n", argv[0]);
@@ -425,9 +496,38 @@ int main(int argc, char **argv)
 		}
 
 		if (logind_dirty) {
-			current = logind_bus ? query_shell_state(logind_bus)
-					     : SHELL_NONE;
+			uint32_t uid = 0;
+			enum shell_state next = logind_bus
+				? query_shell_state(logind_bus, &uid)
+				: SHELL_NONE;
+
 			logind_dirty = false;
+			if (next != state && next != pending_state) {
+				if (next == SHELL_NONE || shell_present(uid)) {
+					current = next;
+					pending_state = SHELL_NONE;
+				} else {
+					/*
+					 * The session exists but its shell
+					 * has not started yet; resetting now
+					 * would make the old shell flash the
+					 * builtin orientation.  Defer.
+					 */
+					pending_state = next;
+					pending_uid = uid;
+					pending_deadline = now_us() + SHELL_WAIT_USEC;
+					printf(DEVICE_NAME ": shell %u not up yet, deferring switch reset\n",
+					       uid);
+					fflush(stdout);
+				}
+			}
+		}
+
+		if (pending_state != SHELL_NONE &&
+		    (shell_present(pending_uid) ||
+		     now_us() >= pending_deadline)) {
+			current = pending_state;
+			pending_state = SHELL_NONE;
 		}
 
 		/*
@@ -486,7 +586,9 @@ int main(int argc, char **argv)
 			logind_retry_at = now_us() + LOGIND_RETRY_USEC;
 		}
 
-		if (wait_for_events(IDLE_TIMEOUT_MS) < 0)
+		if (wait_for_events(pending_state != SHELL_NONE
+					    ? SHELL_WAIT_POLL_MS
+					    : IDLE_TIMEOUT_MS) < 0)
 			break;
 	}
 
