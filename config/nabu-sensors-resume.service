@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-2.0-only
+[Unit]
+Description=Recover the Nabu SLPI sensor stack after resume
+Documentation=file:///usr/local/share/doc/nabu-accelerometer/DEVELOPMENT.md
+After=suspend.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/nabu-sensors-resume
+
+[Install]
+WantedBy=suspend.target

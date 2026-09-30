@@ -67,4 +67,6 @@ else
 	echo "using installed tablet-mode helper"
 fi
 
+"$libexec_dir/install-sensors-resume.sh"
+
 echo "installed the Nabu userspace sensor stack"
