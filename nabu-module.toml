@@ -7,7 +7,6 @@ requires    = []
 
 [provides]
 overlay      = "kernel-overlay"
-patches      = ["patches/0001-sm8150-slpi-fastrpc-pdr.patch"]
 dtsi         = ["arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu-accelerometer-slpi-boot-only.dtsi"]
 config       = ["config/nabu-accelerometer.config"]
 systemd      = ["config/nabu-tablet-mode.service", "config/nabu-sensors-suspend.service", "config/nabu-sensors-resume.service"]
