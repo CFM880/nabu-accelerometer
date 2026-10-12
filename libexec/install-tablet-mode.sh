@@ -95,6 +95,6 @@ grep -Fq 'Nabu Tablet Mode Switch' /proc/bus/input/devices || {
 
 echo "installed and enabled Nabu tablet-mode switch"
 echo "binary SHA256: $(sha256sum "$binary_target" | cut -d ' ' -f 1)"
-echo "the switch starts OFF, then changes to ON five seconds after the user GNOME Shell appears"
-echo "this ordering lets Mutter consume its native-portrait initial orientation first"
+echo "the switch starts OFF and turns ON as soon as a graphical Mutter claims the accelerometer"
+echo "this ordering lets each Mutter instance claim the sensor and consume its initial orientation first"
 echo "rollback: sudo ./remove-tablet-mode.sh"

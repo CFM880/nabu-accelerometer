@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-2.0-only
+[Unit]
+Description=Quiesce the Nabu FastRPC sensor server before suspend
+Documentation=file:///usr/local/share/doc/nabu-accelerometer/DEVELOPMENT.md
+Before=suspend.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/nabu-sensors-sleep stop
+
+[Install]
+WantedBy=suspend.target

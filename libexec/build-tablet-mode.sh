@@ -23,9 +23,18 @@ command -v "$compiler" >/dev/null 2>&1 || {
 }
 
 rm -f -- "$temporary"
+# NABU_LIBSYSTEMD_DIR points at an extracted arm64 libsystemd (lib + headers)
+# for hosts without libsystemd-dev:arm64.  --allow-shlib-undefined is needed
+# because that stub lacks libsystemd's own transitive deps (libcap, liblz4,
+# ...), which exist on the target but not on the cross build host.
+libsystemd_flags=
+if [ -n "${NABU_LIBSYSTEMD_DIR:-}" ]; then
+	libsystemd_flags="-L$NABU_LIBSYSTEMD_DIR -Wl,--allow-shlib-undefined"
+fi
+# shellcheck disable=SC2086
 "$compiler" -std=c11 -O2 -Wall -Wextra -Werror \
-	-Wl,-z,relro,-z,now \
-	-o "$temporary" "$source_file"
+	-Wl,-z,relro,-z,now $libsystemd_flags \
+	-o "$temporary" "$source_file" -lsystemd
 chmod 0755 "$temporary"
 mv -f -- "$temporary" "$destination"
 
