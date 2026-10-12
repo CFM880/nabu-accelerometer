@@ -30,6 +30,12 @@ install = "scripts/nabu-install.sh"
 "qcom_pd_mapper.ko" = "out:drivers/soc/qcom/qcom_pd_mapper.ko"
 "nabu-tablet-mode"  = "module:out/nabu-tablet-mode"
 
+# Userspace SSC stack, built by the build hook (libexec/build-userspace.sh).
+"ssccli"                      = "module:out/userspace/root/usr/local/bin/ssccli"
+"libssc.so.2"                 = "module:out/userspace/root/usr/local/lib/libssc.so.2"
+"iio-sensor-proxy-ssc"        = "module:out/userspace/root/usr/local/libexec/iio-sensor-proxy"
+"net.hadess.SensorProxy.conf" = "module:out/userspace/root/usr/local/share/dbus-1/system.d/net.hadess.SensorProxy.conf"
+
 [install]
 "fastrpc.ko"        = "/lib/modules/@release@/kernel/drivers/misc/fastrpc.ko"
 "qcom_pd_mapper.ko" = "/lib/modules/@release@/kernel/drivers/soc/qcom/qcom_pd_mapper.ko"

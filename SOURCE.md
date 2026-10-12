@@ -40,13 +40,14 @@ third_party/iio-sensor-proxy-3.9.tar.gz
 SHA256: af5edd307dcfa52dc3a242d13b7cc756e90a71640caf332efbad960e21649ae4
 ```
 
-The install hook verifies the SHA256, extracts the archive and builds it under
-`third_party/build/` (`libssc/` and `iio-sensor-proxy/`), applies
+The build hook verifies the SHA256, extracts the archives and builds them under
+`third_party/build/` (`libssc/` and `iio-sensor-proxy/`) into
+`out/userspace/root` during `make build`, applies
 `patches/0002-ssc-light-filter.patch` and `userspace/nabu-light-filter.h` to
 iio-sensor-proxy, applies `patches/0003-ssc-gyroscope-magnetometer.patch`, and
-only rebuilds a component that is missing or out of date. The generated
-`net.hadess.SensorProxy.conf` D-Bus policy is installed over the distribution
-file. An explicit archive placed in the artifacts directory takes precedence
-over the vendored one.
+produces the `ssccli`, `libssc.so.2`, `iio-sensor-proxy-ssc` and generated
+`net.hadess.SensorProxy.conf` artifacts. The install hook only copies these
+prebuilt files and configures systemd/udev; it neither compiles nor needs the
+network.
 
 The kernel is reset to the clean upstream base `b9d5d463c216763cec719c04536ea9e14512cad4` (Linux 6.14.11) by `nabu-main`, not to this NABU baseline: the port commits in between are carried as module overlays.

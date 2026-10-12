@@ -74,13 +74,16 @@ sudo bash scripts/install.sh /path/to/artifacts
 分区中的默认文件。安装完成后重启。
 
 两个固定版本源码包已随仓库保存在 `third_party/`（SHA256 见 [SOURCE.md](SOURCE.md)）。
-需要重编时会在仓库内 `third_party/build/`（`libssc/`、`iio-sensor-proxy/`）解压构建，
-给 iio-sensor-proxy 打上 `patches/0002-ssc-light-filter.patch` 并编译，无需再从外部
-准备；已正确安装的组件会直接复用。若要用别的归档，可放进 `artifacts/` 覆盖
-（artifacts 优先）。
+`nabu-main` 的 build 钩子（`scripts/nabu-build.sh` → `libexec/build-userspace.sh`）
+在 `make build` 时把它们编译到 `out/userspace/root`，并给 iio-sensor-proxy 打上
+`patches/0002-ssc-light-filter.patch` 与 `patches/0003-ssc-gyroscope-magnetometer.patch`。
+生成的 `ssccli`、`libssc.so.2`、`iio-sensor-proxy-ssc` 以及生成的
+`net.hadess.SensorProxy.conf` 在 manifest 的 `[artifacts]` 里声明，由 `nabu-main` 收集。
+构建是交叉感知的：当内核工具链的目标与构建主机不同时，会自动生成 meson cross file。
 
-`install.sh`（统一构建下由 `nabu-main install` 调用）会处理 SLPI 文件系统、
-hexagonrpcd、libssc、iio-sensor-proxy 和 tablet-mode helper。
+`make install` 不再编译任何东西：`scripts/nabu-install.sh` 安装 SLPI 文件系统、
+hexagonrpcd（发行版软件包）、**预编译好**的 libssc 与 iio-sensor-proxy，以及
+tablet-mode helper，然后配置 systemd/udev。
 
 ## 验证
 
@@ -129,11 +132,12 @@ SSC 环境光后端加入 Nabu 滤波补丁：使用时间平滑，忽略相对�
 这会改变桌面 D-Bus 的 `LightLevel`；`ssccli --sensor light` 仍可读取未经过此
 滤波的光感数据。参数旨在减少恒定照明下的忽明忽暗，实际环境变化需要稍等才能响应。
 
-已有安装需提供 `iio-sensor-proxy-3.9.tar.gz` 重新构建才能启用补丁。只更新光感
-代理、无需重装内核或重启机器：
+只更新光感代理、无需重装内核或重启机器：先构建，再安装预编译二进制：
 
 ```sh
-sudo sh libexec/install-iio-sensor-proxy-ssc.sh /path/to/iio-sensor-proxy-3.9.tar.gz
+sudo sh libexec/install-iio-sensor-proxy-ssc.sh \
+  out/userspace/root/usr/local/libexec/iio-sensor-proxy \
+  out/userspace/root/usr/local/share/dbus-1/system.d/net.hadess.SensorProxy.conf
 ```
 
 代理重启后，当前 GNOME 会话可能仍保留旧连接，导致收到光感值但背光不再跟随。

@@ -1,0 +1,18 @@
+libssc: skip the python mock server when building the Nabu stack
+
+The mocking/ subdirectory unconditionally requires a python dependency via
+meson's python module (python.dependency()), which is only available natively
+and is not needed for the Nabu runtime: the mock server is used by libssc's own
+test suite only.  The tests/ subdirectory merely refers to its path as a string
+for exe_wrapper, so dropping the subdir keeps configure/compile working.
+
+--- a/meson.build
++++ b/meson.build
+@@ -101,7 +101,6 @@
+ headers = files()
+ map_source = files('libssc.map')
+ 
+-subdir('mocking')
+ subdir('data')
+ subdir('src')
+ subdir('tests')

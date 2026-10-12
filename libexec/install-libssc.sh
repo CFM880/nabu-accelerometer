@@ -1,90 +1,53 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-only
+#
+# nabu-main install helper: install the prebuilt libssc (ssccli + libssc.so.2)
+# produced by the build hook.  Compilation happens at build time; this script
+# only places files and refreshes the linker cache.  It does not need the SLPI
+# FastRPC node, so it works before SLPI has probed.
 set -eu
 
 version=0.4.4
-expected_archive=libssc-v$version.tar.gz
-expected_sha256=716d6bd6b34d2d753060c6b54c9a87e34fae75b724c763bf9ef487efa3621587
+ssccli_target=/usr/local/bin/ssccli
+libssc_target=/usr/local/lib/libssc.so.2
 
-usage()
-{
-	echo "usage: sudo $0 /path/to/$expected_archive" >&2
+[ "$#" -eq 2 ] || {
+	echo "usage: $0 <ssccli> <libssc.so.2>" >&2
 	exit 2
 }
-
-[ "$#" -eq 1 ] || usage
 [ "$(id -u)" -eq 0 ] || {
 	echo "must run as root" >&2
 	exit 1
 }
 
-archive=$(realpath -- "$1")
-[ -s "$archive" ] || {
-	echo "missing libssc source archive: $archive" >&2
-	exit 1
-}
-[ "$(basename -- "$archive")" = "$expected_archive" ] || {
-	echo "unexpected archive name: $(basename -- "$archive")" >&2
-	exit 1
-}
-
-actual_sha256=$(sha256sum "$archive" | cut -d ' ' -f 1)
-[ "$actual_sha256" = "$expected_sha256" ] || {
-	echo "libssc source archive SHA256 mismatch" >&2
-	echo "expected: $expected_sha256" >&2
-	echo "actual:   $actual_sha256" >&2
-	exit 1
-}
-
-# Build and install ssccli eagerly; neither the build nor the version check
-# needs the SLPI FastRPC node, so this works before SLPI has probed.
 if [ -c /dev/fastrpc-sdsp ] && systemctl is-active --quiet hexagonrpcd.service; then
 	slpi_up=true
 else
 	slpi_up=false
 fi
 
-# Ubuntu 26.04 already provides new enough Meson, GLib and libqmi. Keep the
-# dependency list explicit so this produces the same build on a clean target.
-apt-get install --no-install-recommends -y \
-	build-essential \
-	meson \
-	ninja-build \
-	pkgconf \
-	libglib2.0-dev \
-	libqmi-glib-dev \
-	libprotobuf-c-dev \
-	python3-dev \
-	protobuf-c-compiler \
-	protobuf-compiler
+ssccli_source=$(realpath -- "$1")
+libssc_source=$(realpath -- "$2")
 
-# Extract and build inside the repository so the sources remain inspectable.
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-project_dir=$(dirname -- "$script_dir")
-build_root=$project_dir/third_party/build/libssc
-rm -rf -- "$build_root"
-install -d -m 0755 "$build_root"
+[ -s "$ssccli_source" ] || {
+	echo "missing prebuilt ssccli: $ssccli_source" >&2
+	exit 1
+}
+[ -s "$libssc_source" ] || {
+	echo "missing prebuilt libssc.so.2: $libssc_source" >&2
+	exit 1
+}
 
-source_dir=$build_root/source
-build_dir=$build_root/build
-install -d -m 0755 "$source_dir"
-tar -xzf "$archive" --strip-components=1 -C "$source_dir"
-
-meson setup "$build_dir" "$source_dir" \
-	--prefix=/usr/local \
-	--buildtype=release
-meson compile -C "$build_dir"
-meson install -C "$build_dir"
+install -d -o root -g root -m 0755 "$(dirname -- "$ssccli_target")" "$(dirname -- "$libssc_target")"
+install -o root -g root -m 0755 "$ssccli_source" "$ssccli_target"
+install -o root -g root -m 0644 "$libssc_source" "$libssc_target"
 ldconfig
 
-command -v /usr/local/bin/ssccli >/dev/null
-[ "$(/usr/local/bin/ssccli --version)" = "libssc version $version" ] || {
+[ "$("$ssccli_target" --version)" = "libssc version $version" ] || {
 	echo "installed ssccli version check failed" >&2
 	exit 1
 }
 
-echo "installed pinned libssc $version from $expected_archive"
-echo "source SHA256: $actual_sha256"
-echo "ssccli: /usr/local/bin/ssccli"
+echo "installed prebuilt libssc $version: $ssccli_target"
 [ "$slpi_up" = true ] && echo "SLPI and hexagonrpcd were left running"
 echo "libssc installation complete"

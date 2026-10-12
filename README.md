@@ -76,14 +76,20 @@ The installer verifies the UKI SHA256, module names, and vermagic, backs up the 
 UKI, and then atomically replaces the default file on partition 31. Reboot after installation.
 
 Two pinned source tarballs are kept in the repository under `third_party/` (see
-[SOURCE.md](SOURCE.md) for SHA256). When a rebuild is needed, they are extracted and built inside the
-repository at `third_party/build/` (`libssc/`, `iio-sensor-proxy/`), applying
-`patches/0002-ssc-light-filter.patch` to iio-sensor-proxy and compiling it, with no external
-preparation required; already correctly installed components are reused directly. To use a different
-archive, place it in `artifacts/` to override (artifacts take precedence).
+[SOURCE.md](SOURCE.md) for SHA256). The `nabu-main` build hook
+(`scripts/nabu-build.sh` → `libexec/build-userspace.sh`) compiles them during
+`make build` into `out/userspace/root`, applying
+`patches/0002-ssc-light-filter.patch` and
+`patches/0003-ssc-gyroscope-magnetometer.patch` to iio-sensor-proxy. The
+resulting `ssccli`, `libssc.so.2`, `iio-sensor-proxy-ssc` and generated
+`net.hadess.SensorProxy.conf` are declared in the manifest's `[artifacts]` table
+and collected by `nabu-main`. The build is cross aware: when the kernel
+toolchain does not target the build host, a meson cross file is generated.
 
-`install.sh` (invoked by `nabu-main install` under the unified build) handles the SLPI filesystem,
-hexagonrpcd, libssc, iio-sensor-proxy, and the tablet-mode helper.
+`make install` no longer compiles anything: `scripts/nabu-install.sh` installs
+the SLPI filesystem, hexagonrpcd (a distribution package), the **prebuilt**
+libssc and iio-sensor-proxy, and the tablet-mode helper, then wires up
+systemd/udev.
 
 ## Verify
 
@@ -137,11 +143,13 @@ This changes the desktop D-Bus `LightLevel`; `ssccli --sensor light` can still r
 without this filter. The parameters are intended to reduce flicker under constant lighting, and real
 environmental changes take a moment to respond.
 
-An existing installation needs to provide `iio-sensor-proxy-3.9.tar.gz` for a rebuild to enable the
-patch. To update only the light proxy without reinstalling the kernel or rebooting:
+To update only the light proxy without reinstalling the kernel or rebooting,
+build it and install the prebuilt binary:
 
 ```sh
-sudo sh libexec/install-iio-sensor-proxy-ssc.sh /path/to/iio-sensor-proxy-3.9.tar.gz
+sudo sh libexec/install-iio-sensor-proxy-ssc.sh \
+  out/userspace/root/usr/local/libexec/iio-sensor-proxy \
+  out/userspace/root/usr/local/share/dbus-1/system.d/net.hadess.SensorProxy.conf
 ```
 
 After the proxy restarts, the current GNOME session may still hold the old connection, so it
