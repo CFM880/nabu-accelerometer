@@ -43,7 +43,7 @@ strings "$binary_source" | grep -Fq 'Nabu Tablet Mode Switch' || {
 
 model=$(tr -d '\000' </sys/firmware/devicetree/base/model 2>/dev/null || true)
 case $model in
-	'Xiaomi Pad 5 (nabu)'*) ;;
+	'Xiaomi Pad 5'*) ;;
 	*)
 		echo "refusing non-Nabu machine: $model" >&2
 		exit 1

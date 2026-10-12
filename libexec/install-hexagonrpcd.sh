@@ -16,11 +16,6 @@ dropin_source=$script_dir/../config/nabu-slpi-hexagonrpcd.conf
 	exit 1
 }
 
-[ -c /dev/fastrpc-sdsp ] || {
-	echo "missing SLPI FastRPC device: /dev/fastrpc-sdsp" >&2
-	exit 1
-}
-
 [ -f "$dropin_source" ] || {
 	echo "missing packaged systemd override: $dropin_source" >&2
 	exit 1
@@ -50,23 +45,31 @@ fi
 
 # Ubuntu's wrapper defaults unknown SoCs to ADSP.  Nabu's sensor process is
 # the static sensors PD on SLPI, exposed by the upstream kernel as sdsp.
+# Install the package, drop-in and boot enablement eagerly; only the live
+# start and device checks need the SLPI FastRPC node, which appears once the
+# SLPI remoteproc probes.
 apt-get install --no-install-recommends -y hexagonrpcd
 
 install -d -o root -g root -m 0755 "$dropin_dir"
-
 install -o root -g root -m 0644 "$dropin_source" "$dropin"
 
-udevadm trigger --subsystem-match=misc --sysname-match='fastrpc-*'
-udevadm settle
-
-runuser -u fastrpc -- test -r /dev/fastrpc-sdsp
-runuser -u fastrpc -- test -w /dev/fastrpc-sdsp
-
 systemctl daemon-reload
-systemctl enable --now hexagonrpcd.service
+systemctl enable hexagonrpcd.service
 
 echo "installed hexagonrpcd with Nabu SLPI sensors-PD configuration"
 echo "FastRPC device: /dev/fastrpc-sdsp"
 echo "HexagonFS root: $hexagonfs_dir"
 echo "SLPI root-PD readiness: kernel PDR event (15-second failure timeout)"
-echo "the current SLPI recovery cycle will retry initialization automatically"
+
+if [ -c /dev/fastrpc-sdsp ]; then
+	udevadm trigger --subsystem-match=misc --sysname-match='fastrpc-*'
+	udevadm settle
+	runuser -u fastrpc -- test -r /dev/fastrpc-sdsp
+	runuser -u fastrpc -- test -w /dev/fastrpc-sdsp
+	systemctl start hexagonrpcd.service
+	systemctl is-active --quiet hexagonrpcd.service
+	echo "hexagonrpcd is running on /dev/fastrpc-sdsp"
+	echo "the current SLPI recovery cycle will retry initialization automatically"
+else
+	echo "/dev/fastrpc-sdsp is not up yet (SLPI not probed): hexagonrpcd service enabled, start deferred" >&2
+fi

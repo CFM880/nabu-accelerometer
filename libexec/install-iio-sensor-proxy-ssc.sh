@@ -68,10 +68,6 @@ fi
 	echo "unexpected installed libssc version" >&2
 	exit 1
 }
-systemctl is-active --quiet hexagonrpcd.service || {
-	echo "hexagonrpcd.service is not active" >&2
-	exit 1
-}
 
 if [ -e "$dropin" ] && ! cmp -s "$dropin" "$dropin_source"; then
 	echo "refusing to replace unexpected systemd drop-in: $dropin" >&2
@@ -185,13 +181,17 @@ install -o root -g root -m 0644 "$rule_source" "$rule"
 
 systemctl daemon-reload
 udevadm control --reload-rules
-udevadm trigger --action=add --subsystem-match=misc --sysname-match='fastrpc-sdsp*'
-udevadm settle
-systemctl restart iio-sensor-proxy.service
 
-systemctl is-active --quiet iio-sensor-proxy.service
-udevadm info --query=property --path=/sys/class/misc/fastrpc-sdsp | \
-	grep -Fqx 'IIO_SENSOR_PROXY_TYPE=ssc-accel ssc-light ssc-compass ssc-gyro ssc-magnetometer'
+if [ -c /dev/fastrpc-sdsp ]; then
+	udevadm trigger --action=add --subsystem-match=misc --sysname-match='fastrpc-sdsp*'
+	udevadm settle
+	systemctl restart iio-sensor-proxy.service
+	systemctl is-active --quiet iio-sensor-proxy.service
+	udevadm info --query=property --path=/sys/class/misc/fastrpc-sdsp | \
+		grep -Fqx 'IIO_SENSOR_PROXY_TYPE=ssc-accel ssc-light ssc-compass ssc-gyro ssc-magnetometer'
+else
+	echo "iio-sensor-proxy installed; restart deferred until /dev/fastrpc-sdsp appears" >&2
+fi
 
 echo "installed iio-sensor-proxy $version with Qualcomm SSC support: $binary"
 [ -z "$archive" ] || echo "source SHA256: $actual_sha256"
