@@ -79,12 +79,21 @@ Two pinned source tarballs are kept in the repository under `third_party/` (see
 [SOURCE.md](SOURCE.md) for SHA256). The `nabu-main` build hook
 (`scripts/nabu-build.sh` → `libexec/build-userspace.sh`) compiles them during
 `make build` into `out/userspace/root`, applying
-`patches/0002-ssc-light-filter.patch` and
-`patches/0003-ssc-gyroscope-magnetometer.patch` to iio-sensor-proxy. The
+`patches/0002-ssc-light-filter.patch`,
+`patches/0003-ssc-gyroscope-magnetometer.patch` and
+`patches/0005-ssc-startup-claim.patch` to iio-sensor-proxy. The
 resulting `ssccli`, `libssc.so.2`, `iio-sensor-proxy-ssc` and generated
 `net.hadess.SensorProxy.conf` are declared in the manifest's `[artifacts]` table
 and collected by `nabu-main`. The build is cross aware: when the kernel
 toolchain does not target the build host, a meson cross file is generated.
+
+`0005-ssc-startup-claim.patch` fixes a startup race: the proxy owns the
+`net.hadess.SensorProxy` D-Bus name before it finishes `find_sensors()` /
+`driver_open()`, so Mutter can call `ClaimAccelerometer` while the SSC driver
+does not exist yet. That claim was recorded but never started the sensor, so the
+accelerometer never streamed and the panel only rotated after a re-login; the
+patch starts polling for already-claimed sensors once the driver is opened, like
+the hotplug path does.
 
 `make install` no longer compiles anything: `scripts/nabu-install.sh` installs
 the SLPI filesystem, hexagonrpcd (a distribution package), the **prebuilt**

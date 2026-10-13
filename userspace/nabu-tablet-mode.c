@@ -24,9 +24,8 @@
 #define ACCEL_SERVICE "net.hadess.SensorProxy"
 #define ACCEL_INTERFACE "net.hadess.SensorProxy"
 
-/* Event-loop timeout; only used to re-check the fallback deadlines. */
+/* Event-loop timeout; only used to re-check the retry deadlines. */
 #define IDLE_TIMEOUT_MS 1000		/* 1 s */
-#define CLAIM_TIMEOUT_USEC 30000000ULL	/* 30 s: accelerometer proxy absent */
 #define MONITOR_RETRY_USEC 5000000ULL
 #define LOGIND_RETRY_USEC 5000000ULL
 /* Wait for the new session's shell to start before resetting the switch. */
@@ -423,7 +422,6 @@ int main(int argc, char **argv)
 	bool waiting = false;
 	char last_sender[64] = "";
 	char sender[64];
-	uint64_t wait_deadline = 0;
 	uint64_t monitor_retry_at = 0;
 	uint64_t logind_retry_at = 0;
 	enum shell_state pending_state = SHELL_NONE;
@@ -548,12 +546,21 @@ int main(int argc, char **argv)
 				fflush(stdout);
 			}
 			waiting = (state != SHELL_NONE);
-			if (waiting)
-				wait_deadline = now_us() + CLAIM_TIMEOUT_USEC;
 		}
 
 		claimer = drain_claim_monitor(sender);
 
+		/*
+		 * Only turn the switch ON once Mutter has actually claimed the
+		 * accelerometer.  Turning it ON earlier -- for instance on a
+		 * timeout while the sensor stack is still coming up -- makes
+		 * Mutter's update_panel_orientation_managed() call
+		 * uninhibit_tracking() before sync_accelerometer_claimed(), so
+		 * that Mutter never claims and the panel never rotates for the
+		 * whole session (until a re-login starts a fresh Mutter).
+		 * Waiting is always safe: with the switch OFF Mutter simply
+		 * keeps the panel's builtin orientation until the claim arrives.
+		 */
 		if (waiting && claimer != NULL &&
 		    strcmp(claimer, last_sender) != 0) {
 			(void)snprintf(last_sender, sizeof(last_sender), "%s",
@@ -565,15 +572,6 @@ int main(int argc, char **argv)
 			enabled = true;
 			waiting = false;
 			printf(DEVICE_NAME ": SW_TABLET_MODE=ON (accelerometer claimed)\n");
-			fflush(stdout);
-		} else if (waiting && now_us() >= wait_deadline) {
-			if (set_tablet_mode(fd, true) < 0) {
-				perror("enable tablet mode");
-				goto out_destroy;
-			}
-			enabled = true;
-			waiting = false;
-			printf(DEVICE_NAME ": SW_TABLET_MODE=ON (no claim seen, timeout)\n");
 			fflush(stdout);
 		}
 

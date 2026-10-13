@@ -104,6 +104,7 @@ tar -xzf "$iio_archive" --strip-components=1 -C "$iio_src"
 patch --batch --fuzz=0 -d "$iio_src" -p1 < "$module_dir/patches/0002-ssc-light-filter.patch"
 install -m 0644 "$module_dir/userspace/nabu-light-filter.h" "$iio_src/src/nabu-light-filter.h"
 patch --batch --fuzz=0 -d "$iio_src" -p1 < "$module_dir/patches/0003-ssc-gyroscope-magnetometer.patch"
+patch --batch --fuzz=0 -d "$iio_src" -p1 < "$module_dir/patches/0005-ssc-startup-claim.patch"
 # shellcheck disable=SC2086
 meson setup "$iio_build" "$iio_src" \
 	$meson_cross --prefix="$stage/usr/local" --libdir=lib --buildtype=release \

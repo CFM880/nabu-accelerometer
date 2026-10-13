@@ -1,0 +1,27 @@
+diff --git a/src/iio-sensor-proxy.c b/src/iio-sensor-proxy.c
+index 000d21f..038ed32 100644
+--- a/src/iio-sensor-proxy.c
++++ b/src/iio-sensor-proxy.c
+@@ -1021,6 +1021,22 @@ name_acquired_handler (GDBusConnection *connection,
+ 		}
+ 
+ 		DEVICE_FOR_TYPE(i) = sensor_device;
++
++		/*
++		 * The D-Bus name is already owned while name_acquired_handler()
++		 * runs, so a client (e.g. Mutter) can call ClaimAccelerometer
++		 * before driver_open() finished.  handle_generic_method_call()
++		 * records that claim in data->clients[i] but cannot start the
++		 * sensor because the driver does not exist yet; do it here, like
++		 * the hotplug path does.  Without this the sensor never streams
++		 * and the desktop never receives an orientation, so the panel
++		 * only starts rotating after a re-login (a fresh claim arrives
++		 * once the driver is ready).
++		 */
++		if (g_hash_table_size (data->clients[i]) > 0) {
++			data->sensor_startup_dbus_event_delayed[i] = TRUE;
++			driver_set_polling (sensor_device, TRUE);
++		}
+ 	}
+ 
+ 	if (!any_sensors_left (data))

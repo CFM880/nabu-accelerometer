@@ -54,7 +54,14 @@ PD。libssc 0.4.4 通过 QRTR/QMI 读取 SSC 数据。iio-sensor-proxy 3.9 的 S
 
 环境光来自 TCS3701，罗盘来自 Qualcomm Rotation Vector；陀螺仪和 AK0991x 原始
 磁场数据可通过 `ssccli` 读取。`nabu-tablet-mode` 只补充缺失的
-`SW_TABLET_MODE`，屏幕方向仍由 GNOME/Mutter 根据 SensorProxy 数据决定。
+`SW_TABLET_MODE`，屏幕方向仍由 GNOME/Mutter 根据 SensorProxy 数据决定。开关**只在 Mutter
+真正 claim 加速度计后才置 ON**：在 claim 之前置 ON 会让 Mutter 提前
+`uninhibit_tracking()`，该 Mutter 就永不 claim、整个会话都不旋转（只能注销重登恢复）。
+
+`patches/0005-ssc-startup-claim.patch` 修的是 `iio-sensor-proxy` 的启动竞态：它先持有
+`net.hadess.SensorProxy` 名字、后 `find_sensors()`/`driver_open()`，Mutter 在这段窗口里
+claim 会被记录但驱动还不存在、开不了流；补丁在 `name_acquired_handler()` 里对已有 client 的
+传感器补 `driver_set_polling(TRUE)`（与热插拔路径一致）。
 
 ### 环境光滤波回归验证
 
