@@ -25,11 +25,26 @@ nabu_light_filter_advance (NabuLightFilter *filter, gint64 now)
 	filter->updated_at = now;
 }
 
+/* Nabu: gsd-power's reference curve leaves this panel too dim in bright
+ * light - outdoors the backlight stays at a fraction of what the panel can do.
+ * Lift everything above ~80 lux with a mild power curve; below that the
+ * mapping is fine and night-time brightness must not change.  The filter, the
+ * deadband and the published value all work on the boosted scale, so only the
+ * sensor input needs the conversion. */
+static inline double
+nabu_lux_boost (double lux)
+{
+	if (lux <= 80.0)
+		return lux;
+	return 80.0 * pow (lux / 80.0, 1.25);
+}
+
 static inline gboolean
 nabu_light_filter_sample (NabuLightFilter *filter, double lux, gint64 now)
 {
 	if (!isfinite (lux) || lux < 0)
 		return FALSE;
+	lux = nabu_lux_boost (lux);
 	if (!filter->initialized) {
 		*filter = (NabuLightFilter) {
 			.initialized = TRUE,

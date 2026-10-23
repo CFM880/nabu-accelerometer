@@ -36,9 +36,9 @@ test_steps (void)
 				g_assert_cmpfloat (fabs (filter.published - before), <=, MAX (0.5, before * .06) * .25 + 1e-9);
 			}
 		}
-		g_assert_cmpint (first, >=, rising ? 3 : 9);
-		g_assert_cmpint (first, <=, rising ? 6 : 15);
-		g_assert_cmpfloat (fabs (filter.published - target), <=, MAX (4, target * .25));
+		g_assert_cmpint (first, >=, rising ? 2 : 5);
+		g_assert_cmpint (first, <=, rising ? 4 : 8);
+		g_assert_cmpfloat (fabs (filter.published - target), <=, MAX (3, target * .15));
 	}
 }
 
