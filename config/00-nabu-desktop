@@ -1,0 +1,18 @@
+# Nabu: desktop power defaults for every user.
+#
+# ambient-enabled: the SSC stack (hexagonrpcd + libssc + iio-sensor-proxy)
+# exposes the TCS3701 ambient light sensor, but GNOME only follows it when this
+# is set.  A per-user "gsettings set" only writes ~/.config/dconf/user, so a
+# fresh install (or another user) would start with auto-brightness off.
+#
+# sleep-inactive-*-type=suspend: without it GNOME only blanks the screen and
+# never suspends, so pressing the power key while the screen is already blank
+# starts a suspend instead of waking the display - one press to suspend, a
+# second to wake.  With suspend tied to the idle timeout the power key always
+# means "wake up".
+[org/gnome/settings-daemon/plugins/power]
+ambient-enabled=true
+sleep-inactive-ac-type='suspend'
+sleep-inactive-battery-type='suspend'
+sleep-inactive-ac-timeout=900
+sleep-inactive-battery-timeout=900

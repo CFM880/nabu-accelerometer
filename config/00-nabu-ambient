@@ -1,8 +1,0 @@
-# Nabu: turn GNOME's automatic brightness on for every user.
-#
-# The SSC stack (hexagonrpcd + libssc + iio-sensor-proxy) exposes the TCS3701
-# ambient light sensor, but GNOME only follows it when ambient-enabled is set.
-# A system dconf default is the only way to have it on from the first login -
-# a per-user gsettings write does not survive a fresh install.
-[org/gnome/settings-daemon/plugins/power]
-ambient-enabled=true
