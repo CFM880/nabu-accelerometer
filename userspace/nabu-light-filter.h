@@ -48,7 +48,7 @@ nabu_light_filter_sample (NabuLightFilter *filter, double lux, gint64 now)
 static inline void
 nabu_light_filter_select_target (NabuLightFilter *filter, gint64 now)
 {
-	double margin = MAX (4.0, filter->target * 0.25);
+	double margin = MAX (3.0, filter->target * 0.15);
 	int direction = 0;
 	if (filter->smoothed > filter->target + margin &&
 	    filter->raw > filter->target + margin)
@@ -67,7 +67,7 @@ nabu_light_filter_select_target (NabuLightFilter *filter, gint64 now)
 	}
 	gboolean large = direction > 0 ? filter->smoothed > MAX (4.0, filter->target) * 2.0
 	                              : filter->smoothed < filter->target / 2.0;
-	gint64 dwell = (direction > 0 ? (large ? 2 : 6) : (large ? 8 : 12)) * G_USEC_PER_SEC;
+	gint64 dwell = (direction > 0 ? (large ? 1 : 3) : (large ? 4 : 6)) * G_USEC_PER_SEC;
 	if (now - filter->pending_since < dwell)
 		return;
 	filter->target = filter->smoothed;
