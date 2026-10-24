@@ -5,14 +5,16 @@
 # is set.  A per-user "gsettings set" only writes ~/.config/dconf/user, so a
 # fresh install (or another user) would start with auto-brightness off.
 #
-# sleep-inactive-*-type=suspend: without it GNOME only blanks the screen and
-# never suspends, so pressing the power key while the screen is already blank
-# starts a suspend instead of waking the display - one press to suspend, a
-# second to wake.  With suspend tied to the idle timeout the power key always
-# means "wake up".
+# sleep-inactive-*-type=nothing: suspend is not worth it on this tablet yet.
+# Measured with the screen blanked: 0.63 W idle, but 0.78 W while suspended in
+# s2idle - and deep suspend is unavailable because the firmware does not
+# advertise PSCI SYSTEM_SUSPEND (/sys/power/mem_sleep only lists s2idle, "mem"
+# silently falls back to it).  Blanking alone is therefore both cheaper and
+# safer: nothing can fail to wake, and the power key never means "suspend"
+# when the screen is already off.
 [org/gnome/settings-daemon/plugins/power]
 ambient-enabled=true
-sleep-inactive-ac-type='suspend'
-sleep-inactive-battery-type='suspend'
+sleep-inactive-ac-type='nothing'
+sleep-inactive-battery-type='nothing'
 sleep-inactive-ac-timeout=900
 sleep-inactive-battery-timeout=900
