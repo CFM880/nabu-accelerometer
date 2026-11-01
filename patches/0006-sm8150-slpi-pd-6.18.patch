@@ -1,0 +1,19 @@
+diff --git a/drivers/soc/qcom/qcom_pd_mapper.c b/drivers/soc/qcom/qcom_pd_mapper.c
+index 6384f271953d..7b2036fb237a 100644
+--- a/drivers/soc/qcom/qcom_pd_mapper.c
++++ b/drivers/soc/qcom/qcom_pd_mapper.c
+@@ -504,6 +504,14 @@ static const struct qcom_pdm_domain_data *sm8150_domains[] = {
+ 	&cdsp_root_pd,
+ 	&mpss_root_pd_gps,
+ 	&mpss_wlan_pd,
++	/*
++	 * SM8150 uses the same SLPI (instance 90) as SM8250/SDM845.  Without
++	 * these the SLPI's sensor_process never gets its protection domain:
++	 * PDR lookups fail with -ENXIO and the sensor PD is killed by its
++	 * watchdog ("stalled initialization") every ~40s.
++	 */
++	&slpi_root_pd,
++	&slpi_sensor_pd,
+ 	NULL,
+ };
+ 
