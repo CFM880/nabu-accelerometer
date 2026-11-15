@@ -95,6 +95,32 @@ apply_brightness (int pct)
 			   G_DBUS_CALL_FLAGS_NONE, -1, NULL, NULL, NULL);
 }
 
+static void read_light_level (void);
+
+/*
+ * iio-sensor-proxy is restarted by the sensor resume hook after a suspend, so
+ * the claim (and with it the sensor) is lost.  Re-claiming is idempotent; the
+ * LightLevel property then starts flowing again.
+ */
+static gboolean
+reclaim (gpointer user_data)
+{
+	GError *error = NULL;
+
+	(void) user_data;
+
+	g_dbus_proxy_call_sync (sensor_proxy, "ClaimLight", NULL,
+				G_DBUS_CALL_FLAGS_NONE, -1, NULL, &error);
+	if (error) {
+		g_debug ("re-claim failed: %s", error->message);
+		g_clear_error (&error);
+	}
+
+	read_light_level ();
+
+	return G_SOURCE_CONTINUE;
+}
+
 static gboolean
 tick (gpointer user_data)
 {
@@ -219,6 +245,7 @@ main (int argc, char **argv)
 
 	read_light_level ();
 	g_timeout_add (TICK_MS, tick, NULL);
+	g_timeout_add_seconds (30, reclaim, NULL);
 
 	loop = g_main_loop_new (NULL, FALSE);
 	g_main_loop_run (loop);
