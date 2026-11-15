@@ -30,8 +30,8 @@
 #define TICK_MS		250
 /* a change this soon after input is the user moving the slider */
 #define MANUAL_WINDOW_MS 2000
-/* remember what we set, so our own echoes are not mistaken for user input */
-#define RECENT_MAX	16
+/* how often the panel is compared with what we asked for */
+#define CHECK_MS	2000
 /* output slew: percent per second, with a floor so the last steps are quick */
 #define SLEW_FRACTION	0.5
 #define SLEW_MIN	1.0
@@ -117,28 +117,6 @@ static gboolean override;
 static int override_pct;
 static double last_lux = -1.0;
 
-static int recent[RECENT_MAX];
-static int recent_next;
-
-static gboolean
-recently_sent (int value)
-{
-	int i;
-
-	for (i = 0; i < RECENT_MAX; i++)
-		if (recent[i] == value)
-			return TRUE;
-
-	return FALSE;
-}
-
-static void
-remember_sent (int value)
-{
-	recent[recent_next] = value;
-	recent_next = (recent_next + 1) % RECENT_MAX;
-}
-
 static guint64
 idle_time_ms (void)
 {
@@ -202,7 +180,6 @@ apply_brightness (int pct)
 		return;
 
 	applied = pct;
-	remember_sent (pct);
 	g_debug ("set backlight %d%%", pct);
 
 	g_dbus_connection_call (g_dbus_proxy_get_connection (power_proxy),
@@ -289,67 +266,74 @@ resync (void)
 	applied = -1;
 }
 
-static void
-screen_properties_changed (GDBusProxy *proxy, GVariant *changed,
-			   GStrv invalidated, gpointer user_data)
+static int pending_external = -1;
+
+/*
+ * gsd's Brightness notifications cannot be trusted while we are ramping: they
+ * lag behind what we asked for, so during a fade they carry values from tens
+ * of steps ago (75 % reported while the panel was already at 82 %).  Acting on
+ * those made a dim ramp jump back up, because "restore the curve" used the
+ * light of that moment, which was brighter than the fade in progress.
+ *
+ * Check the panel on a slow timer instead: only a value that differs from what
+ * we last set, survives two checks in a row, and is seen while no fade is
+ * running is a real external change.
+ */
+static gboolean
+check_external (gpointer user_data)
 {
 	GVariant *value;
 	int brightness;
 	int curved;
 
-	(void) proxy;
-	(void) invalidated;
 	(void) user_data;
 
-	value = g_variant_lookup_value (changed, "Brightness",
-					G_VARIANT_TYPE_INT32);
+	if (target < 0 || fabs (target - current) > 1.5 || last_lux < 0.0) {
+		pending_external = -1;
+		return G_SOURCE_CONTINUE;
+	}
+
+	value = get_property (power_proxy, SCREEN_IFACE, "Brightness");
 	if (!value)
-		return;
+		return G_SOURCE_CONTINUE;
 
 	brightness = g_variant_get_int32 (value);
 	g_variant_unref (value);
 
-	if (brightness == applied || recently_sent (brightness))
-		return;		/* our own write, or its echo */
-
-	if (last_lux < 0.0)
-		return;
-
-	curved = (int) round (lux_to_pct (last_lux));
-	g_debug ("external %d%%, idle %" G_GUINT64_FORMAT " ms",
-		 brightness, idle_time_ms ());
-
-	/*
-	 * The panel must never be left at a level nobody asked for, so only a
-	 * change that follows real input counts as the user moving the slider.
-	 * Anything else (gsd restoring a value, another client poking the
-	 * backlight) is undone: the curve is authoritative.
-	 */
-	/*
-	 * gsd re-derives its percentage from the raw backlight, so the echo of
-	 * our own write comes back a point or two off; that is not a change.
-	 */
-	if (ABS (brightness - applied) <= 2 && !recently_sent (brightness))
-		return;
-
-	if (idle_time_ms () > MANUAL_WINDOW_MS) {
-		g_debug ("external %d%% while idle (curve %d%%), restoring",
-			 brightness, curved);
-		override = FALSE;
-		current = brightness;
-		applied = -1;
-		target = curved;
-		return;
+	/* gsd re-derives its percentage from the raw backlight: a point or two
+	 * off is its own rounding, not a change */
+	if (ABS (brightness - applied) <= 2) {
+		pending_external = -1;
+		return G_SOURCE_CONTINUE;
 	}
 
-	g_debug ("manual level %d%% (curve would give %d%% at %.2f lux)",
-		 brightness, curved, last_lux);
+	if (pending_external != brightness) {
+		pending_external = brightness;
+		return G_SOURCE_CONTINUE;
+	}
 
-	override = TRUE;
-	override_pct = curved;
+	pending_external = -1;
+	curved = (int) round (lux_to_pct (last_lux));
+
+	if (idle_time_ms () <= MANUAL_WINDOW_MS) {
+		g_message ("manual level %d%% (curve would give %d%% at %.2f lux)",
+			   brightness, curved, last_lux);
+		override = TRUE;
+		override_pct = curved;
+		current = brightness;
+		target = brightness;
+		applied = brightness;
+		return G_SOURCE_CONTINUE;
+	}
+
+	g_message ("external %d%% while the user is away (curve %d%%), restoring",
+		   brightness, curved);
+	override = FALSE;
 	current = brightness;
-	target = brightness;
-	applied = brightness;
+	applied = -1;
+	target = curved;
+
+	return G_SOURCE_CONTINUE;
 }
 
 static void
@@ -405,7 +389,6 @@ tick (gpointer user_data)
 static void
 apply_lux (double lux)
 {
-	GVariant *value;
 	int pct;
 
 	pct = (int) round (lux_to_pct (lux));
@@ -428,15 +411,13 @@ apply_lux (double lux)
 	g_message ("lux %.2f -> %d%% (was %.0f%%, applied %d%%)",
 		   lux, pct, target, applied);
 
-	/* Continue from the level the panel actually shows: the user may have
-	 * moved the slider since the last sensor event, and the fade should
-	 * start where the eye is, not where the previous ramp ended. */
-	value = get_property (power_proxy, SCREEN_IFACE, "Brightness");
-	if (value) {
-		current = g_variant_get_int32 (value);
-		g_variant_unref (value);
-	}
-
+	/*
+	 * Never re-read the panel here: gsd reports its own lagging value, so
+	 * during a fade it hands back a level from tens of steps ago and every
+	 * sensor event would yank the ramp back to it - that is the up/down
+	 * jumping seen on both brighten and dim.  `current` is the ramp state;
+	 * external changes are picked up by check_external() instead.
+	 */
 	if (current < 0.0)
 		current = pct;	/* unknown level: no fade-in */
 
@@ -536,8 +517,7 @@ main (int argc, char **argv)
 
 	g_signal_connect (sensor_proxy, "g-properties-changed",
 			  G_CALLBACK (sensor_properties_changed), NULL);
-	g_signal_connect (power_proxy, "g-properties-changed",
-			  G_CALLBACK (screen_properties_changed), NULL);
+	g_timeout_add (CHECK_MS, check_external, NULL);
 
 	/* gsd restores its stored brightness on resume, so take over again as
 	 * soon as logind reports that the system is awake. */

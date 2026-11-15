@@ -193,7 +193,8 @@ Moving the brightness slider is honoured: a change that arrives while the sessio
 (Mutter IdleMonitor idle time under 2 s) becomes the level until the ambient light changes enough for
 the curve to move 5 points. Changes that arrive while nobody is touching the tablet - gsd restoring a
 stored value, another client writing the backlight - are undone, so the panel is never left at a
-brightness nobody asked for.
+brightness nobody asked for (checked every 2 s, and only while no fade is running: gsd's own
+`Brightness` value lags a fade by tens of steps and must not be used as its starting point).
 
 `config/50-nabu-autobrightness.rules` lets the user service claim the sensor: iio-sensor-proxy
 allows `net.hadess.SensorProxy.claim-sensor` for an active session only.

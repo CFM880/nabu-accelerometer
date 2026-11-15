@@ -167,7 +167,8 @@ Android 的行为：
 手动拖动滑块会被尊重：只有“会话刚刚有输入”（Mutter IdleMonitor 空闲时间 < 2 秒）时的
 亮度变化才视为用户意图，并保留到曲线本身移动 5 个百分点（即光照确实变化）为止；
 而无人操作时出现的变化（gsd 恢复旧值、其它客户端写背光）会被撤销并拉回曲线，
-避免屏幕停在没人要的亮度上。
+避免屏幕停在没人要的亮度上（每 2 秒校验一次，且只在没有过渡进行时校验：gsd 的
+`Brightness` 在过渡中会滞后数十步，绝不能拿来当斜坡起点）。
 
 `config/50-nabu-autobrightness.rules` 让这个用户服务能 claim 传感器：
 iio-sensor-proxy 默认只允许“活跃会话”执行 `net.hadess.SensorProxy.claim-sensor`。
