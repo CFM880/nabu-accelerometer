@@ -1,7 +1,8 @@
 # Nabu: desktop power defaults for every user.
 #
 # ambient-enabled: the SSC stack (hexagonrpcd + libssc + iio-sensor-proxy)
-# exposes the TCS3701 ambient light sensor, but GNOME only follows it when this
+# exposes the BU27030 ambient light sensor (sns_bu27030_back, see the sensor
+# registry in Android's persist partition), but GNOME only follows it when this
 # is set.  A per-user "gsettings set" only writes ~/.config/dconf/user, so a
 # fresh install (or another user) would start with auto-brightness off.
 #
