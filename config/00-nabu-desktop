@@ -14,7 +14,11 @@
 # suspend and it is what the desktop is expected to do; the power key then
 # wakes the tablet from it.
 [org/gnome/settings-daemon/plugins/power]
-ambient-enabled=true
+# nabu-autobrightness (nabu-accelerometer) owns automatic brightness with a
+# fixed lux -> backlight curve and applies it through gsd.  GNOME's own
+# "relative to the last manual brightness" mapping is switched off, otherwise
+# the two fight and a large ambient swing leaves the panel too dark.
+ambient-enabled=false
 sleep-inactive-ac-type='suspend'
 sleep-inactive-battery-type='suspend'
 sleep-inactive-ac-timeout=900
