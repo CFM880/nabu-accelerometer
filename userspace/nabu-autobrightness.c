@@ -51,17 +51,13 @@ static GDBusProxy *sensor_proxy;
 static GDBusProxy *power_proxy;
 static GDBusConnection *system_bus;
 
-/* ClaimLight lives on net.hadess.SensorProxy, not on the Properties
- * interface the property proxy uses. */
 static gboolean
 claim_light (GError **error)
 {
 	GVariant *ret;
 
-	ret = g_dbus_connection_call_sync (system_bus, SENSOR_NAME, SENSOR_PATH,
-					   SENSOR_NAME, "ClaimLight", NULL, NULL,
-					   G_DBUS_CALL_FLAGS_NONE, -1, NULL,
-					   error);
+	ret = g_dbus_proxy_call_sync (sensor_proxy, "ClaimLight", NULL,
+				      G_DBUS_CALL_FLAGS_NONE, -1, NULL, error);
 	if (!ret)
 		return FALSE;
 
@@ -103,19 +99,27 @@ lux_to_pct (double lux)
 
 static int applied = -1;
 
-/* Both proxies are bound to org.freedesktop.DBus.Properties: that is the
- * interface carrying the values we need and the one whose
- * g-properties-changed signal wakes us up.  The proxy cache is per interface,
- * so LightLevel/Brightness never show up there - go through explicit
- * Properties.Get/Set calls instead. */
+/*
+ * The proxies are bound to the service interfaces (net.hadess.SensorProxy and
+ * org.gnome.SettingsDaemon.Power.Screen): GLib only delivers a
+ * PropertiesChanged signal when the interface in the signal matches the
+ * proxy's own interface, and binding them to org.freedesktop.DBus.Properties
+ * silently drops every light change (brightness then only moved on the 30 s
+ * timer).  Values are still read and written through the standard Properties
+ * interface, which the proxies cannot address.
+ */
 static GVariant *
 get_property (GDBusProxy *proxy, const char *iface, const char *name)
 {
 	GVariant *ret, *value = NULL;
 
-	ret = g_dbus_proxy_call_sync (proxy, "Get",
-				      g_variant_new ("(ss)", iface, name),
-				      G_DBUS_CALL_FLAGS_NONE, -1, NULL, NULL);
+	ret = g_dbus_connection_call_sync (g_dbus_proxy_get_connection (proxy),
+					   g_dbus_proxy_get_name (proxy),
+					   g_dbus_proxy_get_object_path (proxy),
+					   "org.freedesktop.DBus.Properties",
+					   "Get", g_variant_new ("(ss)", iface, name),
+					   G_VARIANT_TYPE ("(v)"),
+					   G_DBUS_CALL_FLAGS_NONE, -1, NULL, NULL);
 	if (!ret)
 		return NULL;
 
@@ -132,11 +136,15 @@ apply_brightness (int pct)
 		return;
 
 	applied = pct;
+	g_debug ("set backlight %d%%", pct);
 
-	g_dbus_proxy_call (power_proxy, "Set",
-			   g_variant_new ("(ssv)", SCREEN_IFACE, "Brightness",
-					  g_variant_new_int32 (pct)),
-			   G_DBUS_CALL_FLAGS_NONE, -1, NULL, NULL, NULL);
+	g_dbus_connection_call (g_dbus_proxy_get_connection (power_proxy),
+				POWER_NAME, POWER_PATH,
+				"org.freedesktop.DBus.Properties", "Set",
+				g_variant_new ("(ssv)", SCREEN_IFACE, "Brightness",
+					       g_variant_new_int32 (pct)),
+				NULL, G_DBUS_CALL_FLAGS_NONE, -1, NULL, NULL,
+				NULL);
 }
 
 static void read_light_level (void);
@@ -263,22 +271,17 @@ tick (gpointer user_data)
 }
 
 static void
-read_light_level (void)
+apply_lux (double lux)
 {
 	GVariant *value;
-	double lux;
 	int pct;
-
-	value = get_property (sensor_proxy, SENSOR_NAME, "LightLevel");
-	if (!value)
-		return;
-
-	lux = g_variant_get_double (value);
-	g_variant_unref (value);
 
 	pct = (int) round (lux_to_pct (lux));
 	if (pct < 0 || pct == (int) target)
 		return;
+
+	g_message ("lux %.2f -> %d%% (was %.0f%%, applied %d%%)",
+		   lux, pct, target, applied);
 
 	/* Continue from the level the panel actually shows: the user may have
 	 * moved the slider since the last sensor event, and the fade should
@@ -296,14 +299,40 @@ read_light_level (void)
 }
 
 static void
+read_light_level (void)
+{
+	GVariant *value;
+	double lux;
+
+	value = get_property (sensor_proxy, SENSOR_NAME, "LightLevel");
+	if (!value)
+		return;
+
+	lux = g_variant_get_double (value);
+	g_variant_unref (value);
+
+	apply_lux (lux);
+}
+
+static void
 sensor_properties_changed (GDBusProxy *proxy, GVariant *changed,
 			   GStrv invalidated, gpointer user_data)
 {
+	GVariant *value;
+
 	(void) proxy;
 	(void) user_data;
 
-	if (g_variant_lookup_value (changed, "LightLevel", NULL) ||
-	    g_strv_contains ((const gchar * const *) invalidated, "LightLevel"))
+	value = g_variant_lookup_value (changed, "LightLevel",
+					G_VARIANT_TYPE_DOUBLE);
+	if (value) {
+		apply_lux (g_variant_get_double (value));
+		g_variant_unref (value);
+		return;
+	}
+
+	if (invalidated && g_strv_contains ((const gchar * const *) invalidated,
+					    "LightLevel"))
 		read_light_level ();
 }
 
@@ -326,8 +355,7 @@ main (int argc, char **argv)
 	sensor_proxy = g_dbus_proxy_new_for_bus_sync (G_BUS_TYPE_SYSTEM,
 						      G_DBUS_PROXY_FLAGS_NONE,
 						      NULL, SENSOR_NAME, SENSOR_PATH,
-						      "org.freedesktop.DBus.Properties",
-						      NULL, &error);
+						      SENSOR_NAME, NULL, &error);
 	if (!sensor_proxy) {
 		g_warning ("no ambient light sensor proxy: %s", error->message);
 		g_error_free (error);
@@ -353,8 +381,7 @@ main (int argc, char **argv)
 	power_proxy = g_dbus_proxy_new_for_bus_sync (G_BUS_TYPE_SESSION,
 						     G_DBUS_PROXY_FLAGS_NONE,
 						     NULL, POWER_NAME, POWER_PATH,
-						     "org.freedesktop.DBus.Properties",
-						     NULL, &error);
+						     SCREEN_IFACE, NULL, &error);
 	if (!power_proxy) {
 		g_warning ("no gnome-settings-daemon power proxy: %s",
 			   error->message);
