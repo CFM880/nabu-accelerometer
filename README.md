@@ -189,6 +189,12 @@ that restores the Android behaviour:
 - gsd's own ambient support is switched off (`ambient-enabled=false` in `config/00-nabu-desktop`),
   otherwise the two fight.
 
+Moving the brightness slider is honoured: a change that arrives while the session has recent input
+(Mutter IdleMonitor idle time under 2 s) becomes the level until the ambient light changes enough for
+the curve to move 5 points. Changes that arrive while nobody is touching the tablet - gsd restoring a
+stored value, another client writing the backlight - are undone, so the panel is never left at a
+brightness nobody asked for.
+
 `config/50-nabu-autobrightness.rules` lets the user service claim the sensor: iio-sensor-proxy
 allows `net.hadess.SensorProxy.claim-sensor` for an active session only.
 

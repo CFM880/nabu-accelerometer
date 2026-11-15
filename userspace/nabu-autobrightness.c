@@ -24,7 +24,14 @@
 #define POWER_PATH	"/org/gnome/SettingsDaemon/Power"
 #define SCREEN_IFACE	"org.gnome.SettingsDaemon.Power.Screen"
 
+#define IDLE_NAME	"org.gnome.Mutter.IdleMonitor"
+#define IDLE_PATH	"/org/gnome/Mutter/IdleMonitor/Core"
+
 #define TICK_MS		250
+/* a change this soon after input is the user moving the slider */
+#define MANUAL_WINDOW_MS 2000
+/* remember what we set, so our own echoes are not mistaken for user input */
+#define RECENT_MAX	16
 /* output slew: percent per second, with a floor so the last steps are quick */
 #define SLEW_FRACTION	0.5
 #define SLEW_MIN	1.0
@@ -100,6 +107,65 @@ lux_to_pct (double lux)
 static int applied = -1;
 
 /*
+ * A manual change through the slider (or gsd reacting to something else) must
+ * not be undone by the next sensor event: keep it until the curve itself has
+ * moved meaningfully, i.e. until the ambient light changed enough that the
+ * level we would pick is further than OVERRIDE_HYSTERESIS away.
+ */
+#define OVERRIDE_HYSTERESIS	5
+static gboolean override;
+static int override_pct;
+static double last_lux = -1.0;
+
+static int recent[RECENT_MAX];
+static int recent_next;
+
+static gboolean
+recently_sent (int value)
+{
+	int i;
+
+	for (i = 0; i < RECENT_MAX; i++)
+		if (recent[i] == value)
+			return TRUE;
+
+	return FALSE;
+}
+
+static void
+remember_sent (int value)
+{
+	recent[recent_next] = value;
+	recent_next = (recent_next + 1) % RECENT_MAX;
+}
+
+static guint64
+idle_time_ms (void)
+{
+	GError *error = NULL;
+	GVariant *ret;
+	guint64 idle;
+
+	ret = g_dbus_connection_call_sync (g_dbus_proxy_get_connection (power_proxy),
+					   IDLE_NAME, IDLE_PATH,
+					   "org.gnome.Mutter.IdleMonitor",
+					   "GetIdletime", NULL,
+					   G_VARIANT_TYPE ("(t)"),
+					   G_DBUS_CALL_FLAGS_NONE, 500, NULL,
+					   &error);
+	if (!ret) {
+		g_debug ("no idle time: %s", error->message);
+		g_clear_error (&error);
+		return G_MAXUINT64;
+	}
+
+	g_variant_get (ret, "(t)", &idle);
+	g_variant_unref (ret);
+
+	return idle;
+}
+
+/*
  * The proxies are bound to the service interfaces (net.hadess.SensorProxy and
  * org.gnome.SettingsDaemon.Power.Screen): GLib only delivers a
  * PropertiesChanged signal when the interface in the signal matches the
@@ -136,6 +202,7 @@ apply_brightness (int pct)
 		return;
 
 	applied = pct;
+	remember_sent (pct);
 	g_debug ("set backlight %d%%", pct);
 
 	g_dbus_connection_call (g_dbus_proxy_get_connection (power_proxy),
@@ -213,11 +280,69 @@ resync (void)
 	actual = g_variant_get_int32 (value);
 	g_variant_unref (value);
 
+	override = FALSE;
+
 	if (actual == applied)
 		return;
 
 	current = actual;
 	applied = -1;
+}
+
+static void
+screen_properties_changed (GDBusProxy *proxy, GVariant *changed,
+			   GStrv invalidated, gpointer user_data)
+{
+	GVariant *value;
+	int brightness;
+	int curved;
+
+	(void) proxy;
+	(void) invalidated;
+	(void) user_data;
+
+	value = g_variant_lookup_value (changed, "Brightness",
+					G_VARIANT_TYPE_INT32);
+	if (!value)
+		return;
+
+	brightness = g_variant_get_int32 (value);
+	g_variant_unref (value);
+
+	if (brightness == applied || recently_sent (brightness))
+		return;		/* our own write, or its echo */
+
+	if (last_lux < 0.0)
+		return;
+
+	curved = (int) round (lux_to_pct (last_lux));
+	g_debug ("external %d%%, idle %" G_GUINT64_FORMAT " ms",
+		 brightness, idle_time_ms ());
+
+	/*
+	 * The panel must never be left at a level nobody asked for, so only a
+	 * change that follows real input counts as the user moving the slider.
+	 * Anything else (gsd restoring a value, another client poking the
+	 * backlight) is undone: the curve is authoritative.
+	 */
+	if (idle_time_ms () > MANUAL_WINDOW_MS) {
+		g_debug ("external %d%% while idle (curve %d%%), restoring",
+			 brightness, curved);
+		override = FALSE;
+		current = brightness;
+		applied = -1;
+		target = curved;
+		return;
+	}
+
+	g_debug ("manual level %d%% (curve would give %d%% at %.2f lux)",
+		 brightness, curved, last_lux);
+
+	override = TRUE;
+	override_pct = curved;
+	current = brightness;
+	target = brightness;
+	applied = brightness;
 }
 
 static void
@@ -277,7 +402,20 @@ apply_lux (double lux)
 	int pct;
 
 	pct = (int) round (lux_to_pct (lux));
-	if (pct < 0 || pct == (int) target)
+	if (pct < 0)
+		return;
+
+	last_lux = lux;
+
+	if (override) {
+		if (ABS (pct - override_pct) < OVERRIDE_HYSTERESIS)
+			return;
+		g_debug ("ambient moved %d%% -> %d%%, dropping the manual level",
+			 override_pct, pct);
+		override = FALSE;
+	}
+
+	if (pct == (int) target)
 		return;
 
 	g_message ("lux %.2f -> %d%% (was %.0f%%, applied %d%%)",
@@ -391,6 +529,8 @@ main (int argc, char **argv)
 
 	g_signal_connect (sensor_proxy, "g-properties-changed",
 			  G_CALLBACK (sensor_properties_changed), NULL);
+	g_signal_connect (power_proxy, "g-properties-changed",
+			  G_CALLBACK (screen_properties_changed), NULL);
 
 	/* gsd restores its stored brightness on resume, so take over again as
 	 * soon as logind reports that the system is awake. */
