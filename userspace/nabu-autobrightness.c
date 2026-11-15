@@ -325,6 +325,13 @@ screen_properties_changed (GDBusProxy *proxy, GVariant *changed,
 	 * Anything else (gsd restoring a value, another client poking the
 	 * backlight) is undone: the curve is authoritative.
 	 */
+	/*
+	 * gsd re-derives its percentage from the raw backlight, so the echo of
+	 * our own write comes back a point or two off; that is not a change.
+	 */
+	if (ABS (brightness - applied) <= 2 && !recently_sent (brightness))
+		return;
+
 	if (idle_time_ms () > MANUAL_WINDOW_MS) {
 		g_debug ("external %d%% while idle (curve %d%%), restoring",
 			 brightness, curved);
