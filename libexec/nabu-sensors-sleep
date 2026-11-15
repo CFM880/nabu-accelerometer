@@ -24,11 +24,21 @@ stop)
 	systemctl stop hexagonrpcd.service || true
 	;;
 start)
-	# hexagonrpcd was stopped for the sleep.  iio-sensor-proxy is left
-	# alone: "start" is a no-op on a running unit, so a clean resume keeps
-	# Mutter's claim and rotation, and it is only restarted if it really
-	# died.
-	systemctl start hexagonrpcd.service iio-sensor-proxy.service || true
+	# hexagonrpcd was stopped for the sleep.  The first attach right after
+	# resume can fail ("Unsupported handle: 4294967295") because the SLPI is
+	# still settling, and the daemon then exits immediately - which left the
+	# tablet without sensors (no auto-rotate) after every suspend.  Retry
+	# until it stays up instead of accepting the transient failure.
+	i=0
+	while [ "$i" -lt 15 ]; do
+		systemctl start hexagonrpcd.service || true
+		sleep 1
+		systemctl is-active --quiet hexagonrpcd.service && break
+		i=$((i + 1))
+	done
+	# iio-sensor-proxy is left alone: "start" is a no-op on a running unit,
+	# so a clean resume keeps Mutter's claim and rotation.
+	systemctl start iio-sensor-proxy.service || true
 	;;
 *)
 	echo "usage: $0 {stop|start}" >&2
