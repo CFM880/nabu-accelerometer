@@ -147,6 +147,30 @@ sudo sh libexec/install-iio-sensor-proxy-ssc.sh \
 systemctl --user restart org.gnome.SettingsDaemon.Power.target
 ```
 
+### 固定曲线自动亮度（`nabu-autobrightness`）
+
+GNOME 48 没有 lux→背光表：gsd 以“上次手动亮度”为基准做相对缩放，明暗大幅变化后
+基准会漂移，亮度回不到之前的值；普通室内光照下也明显偏暗。
+
+`nabu-autobrightness` 是随图形会话启动的用户服务里的小型 GIO 守护进程，用来恢复
+Android 的行为：
+
+- 自己 claim 环境光传感器（iio-sensor-proxy 只在有客户端 claim 时才打开它），并每
+  30 秒重新 claim——挂起/唤醒后传感器恢复钩子会重启代理，claim 会丢；
+- 用固定表把 `LightLevel` 映射为亮度，在 log(lux) 上插值：0 lux→8%、20→38%、
+  50→50%、300→72%、3000+→100%；
+- 通过 `org.gnome.SettingsDaemon.Power.Screen` 的 `Brightness` 生效，因此 OSD、
+  滑块和持久化都正常；从面板实际亮度开始，以约 50%/s 过渡；
+- 关闭 gsd 自带的自动亮度（`config/00-nabu-desktop` 里 `ambient-enabled=false`），
+  否则两者会互相覆盖。
+
+`config/50-nabu-autobrightness.rules` 让这个用户服务能 claim 传感器：
+iio-sensor-proxy 默认只允许“活跃会话”执行 `net.hadess.SensorProxy.claim-sensor`。
+
+修改曲线只需改 `userspace/nabu-autobrightness.c` 里的表，再用
+`libexec/install-autobrightness.sh` 重装（`make install` 也会做）；
+unit 放在 `/etc/systemd/user/`，并软链接进 `graphical-session.target.wants`。
+
 ## 回滚
 
 ```sh

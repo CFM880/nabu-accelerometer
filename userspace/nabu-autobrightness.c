@@ -49,6 +49,25 @@ static const struct {
 
 static GDBusProxy *sensor_proxy;
 static GDBusProxy *power_proxy;
+static GDBusConnection *system_bus;
+
+/* ClaimLight lives on net.hadess.SensorProxy, not on the Properties
+ * interface the property proxy uses. */
+static gboolean
+claim_light (GError **error)
+{
+	GVariant *ret;
+
+	ret = g_dbus_connection_call_sync (system_bus, SENSOR_NAME, SENSOR_PATH,
+					   SENSOR_NAME, "ClaimLight", NULL, NULL,
+					   G_DBUS_CALL_FLAGS_NONE, -1, NULL,
+					   error);
+	if (!ret)
+		return FALSE;
+
+	g_variant_unref (ret);
+	return TRUE;
+}
 static double target = -1.0;
 static double current = -1.0;
 
@@ -82,14 +101,39 @@ lux_to_pct (double lux)
 	return curve[G_N_ELEMENTS (curve) - 1].pct;
 }
 
+static int applied = -1;
+
+/* Both proxies are bound to org.freedesktop.DBus.Properties: that is the
+ * interface carrying the values we need and the one whose
+ * g-properties-changed signal wakes us up.  The proxy cache is per interface,
+ * so LightLevel/Brightness never show up there - go through explicit
+ * Properties.Get/Set calls instead. */
+static GVariant *
+get_property (GDBusProxy *proxy, const char *iface, const char *name)
+{
+	GVariant *ret, *value = NULL;
+
+	ret = g_dbus_proxy_call_sync (proxy, "Get",
+				      g_variant_new ("(ss)", iface, name),
+				      G_DBUS_CALL_FLAGS_NONE, -1, NULL, NULL);
+	if (!ret)
+		return NULL;
+
+	g_variant_get (ret, "(v)", &value);
+	g_variant_unref (ret);
+
+	return value;
+}
+
 static void
 apply_brightness (int pct)
 {
-	if (!power_proxy)
+	if (!power_proxy || pct == applied)
 		return;
 
-	g_dbus_proxy_call (power_proxy,
-			   "org.freedesktop.DBus.Properties.Set",
+	applied = pct;
+
+	g_dbus_proxy_call (power_proxy, "Set",
 			   g_variant_new ("(ssv)", SCREEN_IFACE, "Brightness",
 					  g_variant_new_int32 (pct)),
 			   G_DBUS_CALL_FLAGS_NONE, -1, NULL, NULL, NULL);
@@ -109,9 +153,7 @@ reclaim (gpointer user_data)
 
 	(void) user_data;
 
-	g_dbus_proxy_call_sync (sensor_proxy, "ClaimLight", NULL,
-				G_DBUS_CALL_FLAGS_NONE, -1, NULL, &error);
-	if (error) {
+	if (!claim_light (&error)) {
 		g_debug ("re-claim failed: %s", error->message);
 		g_clear_error (&error);
 	}
@@ -119,6 +161,29 @@ reclaim (gpointer user_data)
 	read_light_level ();
 
 	return G_SOURCE_CONTINUE;
+}
+
+static gboolean
+has_light_sensor (void)
+{
+	GVariant *value = get_property (sensor_proxy, SENSOR_NAME,
+					"HasAmbientLight");
+	gboolean has;
+
+	if (!value)
+		return FALSE;
+
+	has = g_variant_get_boolean (value);
+	g_variant_unref (value);
+
+	return has;
+}
+
+static gboolean
+reclaim_once (gpointer user_data)
+{
+	reclaim (user_data);
+	return G_SOURCE_REMOVE;
 }
 
 static gboolean
@@ -154,7 +219,7 @@ read_light_level (void)
 	double lux;
 	int pct;
 
-	value = g_dbus_proxy_get_cached_property (sensor_proxy, "LightLevel");
+	value = get_property (sensor_proxy, SENSOR_NAME, "LightLevel");
 	if (!value)
 		return;
 
@@ -162,15 +227,20 @@ read_light_level (void)
 	g_variant_unref (value);
 
 	pct = (int) round (lux_to_pct (lux));
-	if (pct < 0)
+	if (pct < 0 || pct == (int) target)
 		return;
 
-	/* Follow the sensor down immediately, climb gently: a shadow is not a
-	 * reason to flash the panel, and the eye adapts slowly upwards. */
-	if (current < 0.0) {
-		current = pct;
-		apply_brightness (pct);
+	/* Continue from the level the panel actually shows: the user may have
+	 * moved the slider since the last sensor event, and the fade should
+	 * start where the eye is, not where the previous ramp ended. */
+	value = get_property (power_proxy, SCREEN_IFACE, "Brightness");
+	if (value) {
+		current = g_variant_get_int32 (value);
+		g_variant_unref (value);
 	}
+
+	if (current < 0.0)
+		current = pct;	/* unknown level: no fade-in */
 
 	target = pct;
 }
@@ -194,8 +264,14 @@ main (int argc, char **argv)
 
 	(void) argc;
 	(void) argv;
-	GVariant *has_light;
 	GError *error = NULL;
+
+	system_bus = g_bus_get_sync (G_BUS_TYPE_SYSTEM, NULL, &error);
+	if (!system_bus) {
+		g_warning ("no system bus: %s", error->message);
+		g_error_free (error);
+		return 1;
+	}
 
 	sensor_proxy = g_dbus_proxy_new_for_bus_sync (G_BUS_TYPE_SYSTEM,
 						      G_DBUS_PROXY_FLAGS_NONE,
@@ -211,22 +287,18 @@ main (int argc, char **argv)
 	/* iio-sensor-proxy only enables the light sensor while a client holds the
 	 * claim (gsd used to do that for its own ambient support), so claim it
 	 * ourselves before reading anything. */
-	g_dbus_proxy_call_sync (sensor_proxy, "ClaimLight", NULL,
-				G_DBUS_CALL_FLAGS_NONE, -1, NULL, &error);
-	if (error) {
+	if (!claim_light (&error)) {
 		g_message ("cannot claim the ambient light sensor: %s",
 			   error->message);
 		g_clear_error (&error);
 		return 1;
 	}
 
-	has_light = g_dbus_proxy_get_cached_property (sensor_proxy, "HasAmbientLight");
-	if (!has_light || !g_variant_get_boolean (has_light)) {
-		g_message ("no ambient light sensor, nothing to do");
-		g_clear_pointer (&has_light, g_variant_unref);
-		return 0;
-	}
-	g_variant_unref (has_light);
+	/* The sensor only appears a moment after the claim, so do not treat a
+	 * missing HasAmbientLight here as fatal: the timers below keep checking
+	 * and LightLevel starts flowing once iio-sensor-proxy has opened it. */
+	if (!has_light_sensor ())
+		g_message ("ambient light sensor not ready yet, waiting");
 
 	power_proxy = g_dbus_proxy_new_for_bus_sync (G_BUS_TYPE_SESSION,
 						     G_DBUS_PROXY_FLAGS_NONE,
@@ -245,6 +317,9 @@ main (int argc, char **argv)
 
 	read_light_level ();
 	g_timeout_add (TICK_MS, tick, NULL);
+	/* First reading a moment later: the sensor is only opened after the
+	 * claim, and without an event the curve would not be applied at all. */
+	g_timeout_add (1500, reclaim_once, NULL);
 	g_timeout_add_seconds (30, reclaim, NULL);
 
 	loop = g_main_loop_new (NULL, FALSE);

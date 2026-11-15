@@ -14,3 +14,9 @@ install -m0755 "$binary" "$root/usr/local/libexec/nabu-autobrightness"
 install -m0644 "$unit" "$root/etc/systemd/user/nabu-autobrightness.service"
 ln -sf /etc/systemd/user/nabu-autobrightness.service \
 	"$root/etc/systemd/user/graphical-session.target.wants/nabu-autobrightness.service"
+
+# polkit: the daemon runs as the session user and has to claim the sensor,
+# which iio-sensor-proxy only allows for an active session by default.
+install -d -m0755 "$root/etc/polkit-1/rules.d"
+install -m0644 "$(dirname -- "$0")/../config/50-nabu-autobrightness.rules" \
+	"$root/etc/polkit-1/rules.d/50-nabu-autobrightness.rules"

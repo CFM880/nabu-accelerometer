@@ -169,6 +169,34 @@ user's terminal to reconnect the power service (no sudo needed):
 systemctl --user restart org.gnome.SettingsDaemon.Power.target
 ```
 
+### Fixed-curve auto-brightness (`nabu-autobrightness`)
+
+GNOME 48 has no lux → backlight table: gsd scales the backlight relative to the last manually
+chosen level, so a large ambient swing moves that reference and the panel does not return to its
+previous brightness (and it is far too dim at ordinary indoor light).
+
+`nabu-autobrightness` is a small GIO daemon (a user service started with the graphical session)
+that restores the Android behaviour:
+
+- it claims the ambient light sensor (iio-sensor-proxy only opens it while a client holds the
+  claim) and re-claims every 30 s, because the sensor resume hook restarts the proxy after a
+  suspend;
+- it maps `LightLevel` through a fixed table, interpolated in log(lux): 0 lux → 8 %, 20 → 38 %,
+  50 → 50 %, 300 → 72 %, 3000+ → 100 %;
+- it applies the result through `org.gnome.SettingsDaemon.Power.Screen` `Brightness`, so the OSD,
+  the slider and the persistence keep working, ramping at about 50 %/s from the level the panel
+  actually shows;
+- gsd's own ambient support is switched off (`ambient-enabled=false` in `config/00-nabu-desktop`),
+  otherwise the two fight.
+
+`config/50-nabu-autobrightness.rules` lets the user service claim the sensor: iio-sensor-proxy
+allows `net.hadess.SensorProxy.claim-sensor` for an active session only.
+
+Change the table in `userspace/nabu-autobrightness.c` and reinstall with
+`libexec/install-autobrightness.sh` (`make install` does it too):
+the unit lives in `/etc/systemd/user/` and is symlinked into
+`graphical-session.target.wants`.
+
 ## Rollback
 
 ```sh

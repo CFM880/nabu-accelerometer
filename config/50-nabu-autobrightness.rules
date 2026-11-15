@@ -1,0 +1,15 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * nabu: allow the fixed-curve auto-brightness daemon (a user service) to claim
+ * the ambient light sensor.
+ *
+ * iio-sensor-proxy ships net.hadess.SensorProxy.claim-sensor with
+ * allow_active=yes only, and a user service started with the graphical session
+ * does not always count as an active session (the call is denied and the
+ * daemon cannot read LightLevel at all).  Claiming only enables the sensor;
+ * the readings stay world-readable through the same interface.
+ */
+polkit.addRule(function(action, subject) {
+	if (action.id == "net.hadess.SensorProxy.claim-sensor")
+		return polkit.Result.YES;
+});
