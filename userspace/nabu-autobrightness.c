@@ -186,6 +186,56 @@ reclaim_once (gpointer user_data)
 	return G_SOURCE_REMOVE;
 }
 
+/*
+ * A change we did not make ourselves (gsd re-applies its stored brightness on
+ * resume, for example) leaves the panel at a level the curve does not want
+ * while our target is unchanged, so nothing would ever correct it.  Adopt the
+ * real level as the starting point and force the next tick to write again.
+ */
+static void
+resync (void)
+{
+	GVariant *value;
+	int actual;
+
+	value = get_property (power_proxy, SCREEN_IFACE, "Brightness");
+	if (!value)
+		return;
+
+	actual = g_variant_get_int32 (value);
+	g_variant_unref (value);
+
+	if (actual == applied)
+		return;
+
+	current = actual;
+	applied = -1;
+}
+
+static void
+logind_prepare_for_sleep (GDBusConnection *connection, const char *sender,
+			  const char *object_path, const char *interface_name,
+			  const char *signal_name, GVariant *parameters,
+			  gpointer user_data)
+{
+	gboolean sleeping;
+
+	(void) connection;
+	(void) sender;
+	(void) object_path;
+	(void) interface_name;
+	(void) signal_name;
+	(void) user_data;
+
+	g_variant_get (parameters, "(b)", &sleeping);
+	if (sleeping)
+		return;
+
+	resync ();
+
+	return;
+}
+
 static gboolean
 tick (gpointer user_data)
 {
@@ -314,6 +364,15 @@ main (int argc, char **argv)
 
 	g_signal_connect (sensor_proxy, "g-properties-changed",
 			  G_CALLBACK (sensor_properties_changed), NULL);
+
+	/* gsd restores its stored brightness on resume, so take over again as
+	 * soon as logind reports that the system is awake. */
+	g_dbus_connection_signal_subscribe (system_bus, "org.freedesktop.login1",
+					    "org.freedesktop.login1.Manager",
+					    "PrepareForSleep",
+					    "/org/freedesktop/login1", NULL,
+					    G_DBUS_SIGNAL_FLAGS_NONE,
+					    logind_prepare_for_sleep, NULL, NULL);
 
 	read_light_level ();
 	g_timeout_add (TICK_MS, tick, NULL);
