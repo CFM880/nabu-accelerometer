@@ -33,12 +33,13 @@ test_steps (void)
 				if (!first)
 					first = t;
 				g_assert_true (rising ? filter.published > before : filter.published < before);
-				g_assert_cmpfloat (fabs (filter.published - before), <=, MAX (0.5, before * .06) * .25 + 1e-9);
+				g_assert_cmpfloat (fabs (filter.published - before), <=, MAX (2.0, before * .40) * .25 + 1e-9);
 			}
 		}
-		g_assert_cmpint (first, >=, rising ? 2 : 5);
-		g_assert_cmpint (first, <=, rising ? 4 : 8);
-		g_assert_cmpfloat (fabs (filter.published - target), <=, MAX (3, target * .15));
+		g_assert_cmpint (first, >=, rising ? 1 : 3);
+		g_assert_cmpint (first, <=, rising ? 3 : 6);
+		double expect = nabu_lux_boost (target);
+		g_assert_cmpfloat (fabs (filter.published - expect), <=, MAX (3, expect * .15));
 	}
 }
 
@@ -67,7 +68,7 @@ test_invalid_and_reset (void)
 	g_assert_cmpfloat (filter.raw, ==, 0);
 	filter = (NabuLightFilter) { 0 }; /* Release/reclaim starts from fresh data. */
 	g_assert_true (nabu_light_filter_sample (&filter, 300, 10 * G_USEC_PER_SEC));
-	g_assert_cmpfloat (filter.published, ==, 300);
+	g_assert_cmpfloat (filter.published, ==, nabu_lux_boost (300));
 }
 
 static void
@@ -92,7 +93,8 @@ test_stall_and_frequency (void)
 	nabu_light_filter_poll (&filter, 10 * G_USEC_PER_SEC);
 	double before = filter.published;
 	g_assert_true (nabu_light_filter_poll (&filter, 100 * G_USEC_PER_SEC));
-	g_assert_cmpfloat (filter.published - before, <=, before * .015 + 1e-9);
+	/* one 250 ms tick at the 40 %/s slew */
+	g_assert_cmpfloat (filter.published - before, <=, before * .10 + 1e-9);
 	before = filter.published;
 	for (int ms = 1; ms < 250; ms++)
 		g_assert_false (nabu_light_filter_poll (&filter, 100 * G_USEC_PER_SEC + ms * 1000));

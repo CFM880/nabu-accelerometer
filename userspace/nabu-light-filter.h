@@ -20,7 +20,7 @@ nabu_light_filter_advance (NabuLightFilter *filter, gint64 now)
 	if (!filter->initialized || now <= filter->updated_at)
 		return;
 	double dt = (now - filter->updated_at) / (double) G_USEC_PER_SEC;
-	double tau = filter->raw > filter->smoothed ? 2.0 : 5.0;
+	double tau = filter->raw > filter->smoothed ? 1.5 : 3.0;
 	filter->smoothed += (filter->raw - filter->smoothed) * (1.0 - exp (-dt / tau));
 	filter->updated_at = now;
 }
@@ -82,7 +82,12 @@ nabu_light_filter_select_target (NabuLightFilter *filter, gint64 now)
 	}
 	gboolean large = direction > 0 ? filter->smoothed > MAX (4.0, filter->target) * 2.0
 	                              : filter->smoothed < filter->target / 2.0;
-	gint64 dwell = (direction > 0 ? (large ? 1 : 3) : (large ? 4 : 6)) * G_USEC_PER_SEC;
+	/* nabu: keep the debounce short - the old dwell (1-3 s rising, 4-6 s
+	 * falling) plus the 2/5 s low-pass made a darkened room take 10 s or
+	 * more to react.  Sub-second dwell still swallows sensor noise because
+	 * the target also has to stay beyond the margin. */
+	gint64 dwell = (direction > 0 ? (large ? 500 : 6000) : (large ? 1000 : 6000)) *
+		(G_USEC_PER_SEC / 1000);
 	if (now - filter->pending_since < dwell)
 		return;
 	filter->target = filter->smoothed;
@@ -106,7 +111,10 @@ nabu_light_filter_poll (NabuLightFilter *filter, gint64 now)
 	dt = MIN (dt, 0.25);
 	filter->output_at = now;
 	double delta = filter->target - filter->published;
-	double step = MAX (0.5, filter->published * 0.06) * dt;
+	/* nabu: 12 %/s made a full darkening take 16 s to settle; 40 %/s (with a
+	 * floor so the last few lux are not crawled to) lands in about 6 s while
+	 * still ramping instead of jumping. */
+	double step = MAX (2.0, filter->published * 0.40) * dt;
 	if (fabs (delta) < 0.000001)
 		return FALSE;
 	filter->published += CLAMP (delta, -step, step);
