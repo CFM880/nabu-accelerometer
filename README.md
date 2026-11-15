@@ -184,10 +184,14 @@ that restores the Android behaviour:
 - it maps `LightLevel` through a fixed table, interpolated in log(lux): 0 lux → 8 %, 20 → 38 %,
   50 → 50 %, 300 → 72 %, 3000+ → 100 %;
 - it applies the result through `org.gnome.SettingsDaemon.Power.Screen` `Brightness`, so the OSD,
-  the slider and the persistence keep working, ramping at about 50 %/s from the level the panel
-  actually shows;
+  the slider and the persistence keep working;
+- the panel holds its level while the light changes and moves 0.8 s after the reading settles, then
+  linearly at 1 % per 40 ms (~25 %/s); differences below 2 % are ignored so noise does not step the
+  backlight;
 - gsd's own ambient support is switched off (`ambient-enabled=false` in `config/00-nabu-desktop`),
-  otherwise the two fight.
+  otherwise the two fight; that key is user state and was found switched back on in a live session
+  (the panel fell from 74 % to 36 % while the daemon was ramping up), so the daemon forces it off at
+  every start.
 
 Moving the brightness slider is honoured: a change that arrives while the session has recent input
 (Mutter IdleMonitor idle time under 2 s) becomes the level until the ambient light changes enough for

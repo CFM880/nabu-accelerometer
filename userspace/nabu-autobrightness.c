@@ -13,6 +13,16 @@
  * switched off (org.gnome.settings-daemon.plugins.power ambient-enabled=false)
  * so the two do not fight.
  *
+ * Behaviour, chosen on hardware:
+ *
+ * - the panel keeps its current level while the light is changing, and moves
+ *   once the reading has been stable for SETTLE_MS.  Chasing every sensor step
+ *   looked like flicker, and waiting is what makes the change feel deliberate;
+ * - the move itself is linear at one percent per tick (both directions), so it
+ *   arrives quickly and evenly, like dragging the slider;
+ * - differences below DEADBAND are ignored, so sensor noise around a curve
+ *   knee no longer steps the backlight by one percent back and forth.
+ *
  * Details: nabu-linux-overlay/docs/port-6.18.md
  */
 #include <gio/gio.h>
@@ -27,14 +37,23 @@
 #define IDLE_NAME	"org.gnome.Mutter.IdleMonitor"
 #define IDLE_PATH	"/org/gnome/Mutter/IdleMonitor/Core"
 
-#define TICK_MS		250
+/* how long the light has to stay put before the panel follows it */
+#define SETTLE_MS	800
+/* the move after that: one percent per tick, i.e. 25 %/s */
+#define RAMP_TICK_MS	40
+/* the panel is left alone while the curve is this close to what it shows */
+#define DEADBAND	2
 /* a change this soon after input is the user moving the slider */
 #define MANUAL_WINDOW_MS 2000
 /* how often the panel is compared with what we asked for */
 #define CHECK_MS	2000
-/* output slew: percent per second, with a floor so the last steps are quick */
-#define SLEW_FRACTION	0.5
-#define SLEW_MIN	1.0
+/* the sensor is re-claimed this often (the resume hook restarts the proxy) */
+#define RECLAIM_SECONDS	30
+/*
+ * A manual level is kept until the curve itself has moved meaningfully, i.e.
+ * until the ambient light changed enough for the curve to be this far away.
+ */
+#define OVERRIDE_HYSTERESIS 5
 
 static const struct {
 	double lux;
@@ -58,6 +77,22 @@ static GDBusProxy *sensor_proxy;
 static GDBusProxy *power_proxy;
 static GDBusConnection *system_bus;
 
+/* last value written to gsd; -1 while unknown */
+static int applied = -1;
+/* position of the running move, in percent */
+static double current = -1.0;
+/* value the running move is heading to, -1 when idle */
+static int ramp_target = -1;
+/* value waiting for the light to settle, -1 when idle */
+static int pending_pct = -1;
+
+static guint settle_source;
+static guint ramp_source;
+
+static gboolean override;
+static int override_pct;
+static double last_lux = -1.0;
+
 static gboolean
 claim_light (GError **error)
 {
@@ -71,8 +106,6 @@ claim_light (GError **error)
 	g_variant_unref (ret);
 	return TRUE;
 }
-static double target = -1.0;
-static double current = -1.0;
 
 static double
 lux_to_pct (double lux)
@@ -103,19 +136,6 @@ lux_to_pct (double lux)
 
 	return curve[G_N_ELEMENTS (curve) - 1].pct;
 }
-
-static int applied = -1;
-
-/*
- * A manual change through the slider (or gsd reacting to something else) must
- * not be undone by the next sensor event: keep it until the curve itself has
- * moved meaningfully, i.e. until the ambient light changed enough that the
- * level we would pick is further than OVERRIDE_HYSTERESIS away.
- */
-#define OVERRIDE_HYSTERESIS	5
-static gboolean override;
-static int override_pct;
-static double last_lux = -1.0;
 
 static guint64
 idle_time_ms (void)
@@ -148,7 +168,7 @@ idle_time_ms (void)
  * org.gnome.SettingsDaemon.Power.Screen): GLib only delivers a
  * PropertiesChanged signal when the interface in the signal matches the
  * proxy's own interface, and binding them to org.freedesktop.DBus.Properties
- * silently drops every light change (brightness then only moved on the 30 s
+ * silently drops every light change (brightness then only moved on the re-claim
  * timer).  Values are still read and written through the standard Properties
  * interface, which the proxies cannot address.
  */
@@ -176,19 +196,136 @@ get_property (GDBusProxy *proxy, const char *iface, const char *name)
 static void
 apply_brightness (int pct)
 {
+	GVariant *ret;
+
 	if (!power_proxy || pct == applied)
 		return;
 
 	applied = pct;
 	g_debug ("set backlight %d%%", pct);
 
-	g_dbus_connection_call (g_dbus_proxy_get_connection (power_proxy),
-				POWER_NAME, POWER_PATH,
-				"org.freedesktop.DBus.Properties", "Set",
-				g_variant_new ("(ssv)", SCREEN_IFACE, "Brightness",
-					       g_variant_new_int32 (pct)),
-				NULL, G_DBUS_CALL_FLAGS_NONE, -1, NULL, NULL,
-				NULL);
+	/*
+	 * Synchronous on purpose: gsd applies back-to-back Sets out of order
+	 * when a move sends them faster than it consumes them (the panel went
+	 * 78 -> 79 -> 78 while the writes were 79, 78, 77), which shows up as a
+	 * visible jump.  One round trip is ~1 ms, so waiting is free here.
+	 */
+	ret = g_dbus_connection_call_sync (g_dbus_proxy_get_connection (power_proxy),
+					   POWER_NAME, POWER_PATH,
+					   "org.freedesktop.DBus.Properties", "Set",
+					   g_variant_new ("(ssv)", SCREEN_IFACE, "Brightness",
+							  g_variant_new_int32 (pct)),
+					   NULL, G_DBUS_CALL_FLAGS_NONE, 200, NULL,
+					   NULL);
+	if (ret)
+		g_variant_unref (ret);
+}
+
+/*
+ * gsd's own ambient support scales the backlight relative to the last manual
+ * level; when it is enabled it keeps writing the backlight behind our back (a
+ * lamp being switched off made the panel fall from 74 % to 36 % while this
+ * daemon was ramping up).  The key is user state and can be switched back on by
+ * a session restart or by the settings panel, so enforce it at every start.
+ */
+static void
+disable_gsd_ambient (void)
+{
+	GSettings *settings;
+
+	settings = g_settings_new ("org.gnome.settings-daemon.plugins.power");
+	if (g_settings_get_boolean (settings, "ambient-enabled")) {
+		g_message ("gsd ambient brightness was enabled, switching it off");
+		g_settings_set_boolean (settings, "ambient-enabled", FALSE);
+	}
+	g_object_unref (settings);
+}
+
+static void
+cancel_settle (void)
+{
+	if (settle_source) {
+		g_source_remove (settle_source);
+		settle_source = 0;
+	}
+
+	pending_pct = -1;
+}
+
+static void
+cancel_ramp (void)
+{
+	if (ramp_source) {
+		g_source_remove (ramp_source);
+		ramp_source = 0;
+	}
+
+	ramp_target = -1;
+}
+
+/*
+ * One percent per tick, in the direction of the target: the move is linear and
+ * short (a 40 point change takes 1.6 s), which is what the eye reads as "it
+ * went to the right level" rather than as a fade.
+ */
+static gboolean
+ramp_tick (gpointer user_data)
+{
+	(void) user_data;
+
+	if (ramp_target < 0) {
+		ramp_source = 0;
+		return G_SOURCE_REMOVE;
+	}
+
+	if (current < 0.0)
+		current = applied < 0 ? 0 : applied;
+
+	if ((int) current == ramp_target) {
+		ramp_source = 0;
+		ramp_target = -1;
+		return G_SOURCE_REMOVE;
+	}
+
+	current += ramp_target > current ? 1 : -1;
+	apply_brightness ((int) current);
+
+	return G_SOURCE_CONTINUE;
+}
+
+static gboolean
+settle_done (gpointer user_data)
+{
+	(void) user_data;
+
+	settle_source = 0;
+
+	if (pending_pct < 0)
+		return G_SOURCE_REMOVE;
+
+	if (ABS (pending_pct - applied) < DEADBAND) {
+		pending_pct = -1;
+		return G_SOURCE_REMOVE;
+	}
+
+	g_message ("light stable: %d%% -> %d%%", applied, pending_pct);
+
+	if (applied < 0) {
+		/* nothing on the panel yet (first reading): no move to make */
+		current = pending_pct;
+		apply_brightness (pending_pct);
+		pending_pct = -1;
+		return G_SOURCE_REMOVE;
+	}
+
+	current = applied;
+	ramp_target = pending_pct;
+	pending_pct = -1;
+
+	if (!ramp_source)
+		ramp_source = g_timeout_add (RAMP_TICK_MS, ramp_tick, NULL);
+
+	return G_SOURCE_REMOVE;
 }
 
 static void read_light_level (void);
@@ -241,8 +378,8 @@ reclaim_once (gpointer user_data)
 /*
  * A change we did not make ourselves (gsd re-applies its stored brightness on
  * resume, for example) leaves the panel at a level the curve does not want
- * while our target is unchanged, so nothing would ever correct it.  Adopt the
- * real level as the starting point and force the next tick to write again.
+ * while the curve target itself is unchanged, so nothing would ever correct
+ * it.  Adopt the real level and let the next reading move on from there.
  */
 static void
 resync (void)
@@ -257,6 +394,8 @@ resync (void)
 	actual = g_variant_get_int32 (value);
 	g_variant_unref (value);
 
+	cancel_settle ();
+	cancel_ramp ();
 	override = FALSE;
 
 	if (actual == applied)
@@ -269,15 +408,11 @@ resync (void)
 static int pending_external = -1;
 
 /*
- * gsd's Brightness notifications cannot be trusted while we are ramping: they
- * lag behind what we asked for, so during a fade they carry values from tens
- * of steps ago (75 % reported while the panel was already at 82 %).  Acting on
- * those made a dim ramp jump back up, because "restore the curve" used the
- * light of that moment, which was brighter than the fade in progress.
- *
- * Check the panel on a slow timer instead: only a value that differs from what
- * we last set, survives two checks in a row, and is seen while no fade is
- * running is a real external change.
+ * gsd's Brightness notifications cannot be trusted while we are moving the
+ * panel: they lag behind what we asked for (75 % reported while the panel was
+ * already at 82 %).  Check the panel on a slow timer instead: only a value that
+ * differs from what we last set and survives two checks in a row is a real
+ * external change.
  */
 static gboolean
 check_external (gpointer user_data)
@@ -288,7 +423,7 @@ check_external (gpointer user_data)
 
 	(void) user_data;
 
-	if (target < 0 || fabs (target - current) > 1.5 || last_lux < 0.0) {
+	if (ramp_source || last_lux < 0.0) {
 		pending_external = -1;
 		return G_SOURCE_CONTINUE;
 	}
@@ -318,20 +453,24 @@ check_external (gpointer user_data)
 	if (idle_time_ms () <= MANUAL_WINDOW_MS) {
 		g_message ("manual level %d%% (curve would give %d%% at %.2f lux)",
 			   brightness, curved, last_lux);
+		cancel_settle ();
+		cancel_ramp ();
 		override = TRUE;
 		override_pct = curved;
 		current = brightness;
-		target = brightness;
 		applied = brightness;
 		return G_SOURCE_CONTINUE;
 	}
 
 	g_message ("external %d%% while the user is away (curve %d%%), restoring",
 		   brightness, curved);
+	cancel_settle ();
+	cancel_ramp ();
 	override = FALSE;
 	current = brightness;
 	applied = -1;
-	target = curved;
+	pending_pct = curved;
+	settle_source = g_timeout_add (SETTLE_MS, settle_done, NULL);
 
 	return G_SOURCE_CONTINUE;
 }
@@ -356,40 +495,18 @@ logind_prepare_for_sleep (GDBusConnection *connection, const char *sender,
 		return;
 
 	resync ();
-
-	return;
 }
 
-static gboolean
-tick (gpointer user_data)
-{
-	double step;
-
-	(void) user_data;
-
-	if (target < 0.0)
-		return G_SOURCE_CONTINUE;
-
-	if (current < 0.0)
-		current = target;
-
-	step = MAX (SLEW_MIN, current * SLEW_FRACTION) / (1000.0 / TICK_MS);
-
-	if (fabs (target - current) <= step) {
-		current = target;
-	} else {
-		current += target > current ? step : -step;
-	}
-
-	apply_brightness ((int) round (current));
-
-	return G_SOURCE_CONTINUE;
-}
-
+/*
+ * Sensor reading in: remember the target and (re)start the settle timer.  The
+ * panel is not touched until the light stops moving, so a lamp being switched
+ * on does not drag the brightness through every intermediate level.
+ */
 static void
 apply_lux (double lux)
 {
 	int pct;
+	int reference;
 
 	pct = (int) round (lux_to_pct (lux));
 	if (pct < 0)
@@ -400,28 +517,25 @@ apply_lux (double lux)
 	if (override) {
 		if (ABS (pct - override_pct) < OVERRIDE_HYSTERESIS)
 			return;
-		g_debug ("ambient moved %d%% -> %d%%, dropping the manual level",
-			 override_pct, pct);
+		g_message ("ambient moved %d%% -> %d%%, dropping the manual level",
+			   override_pct, pct);
 		override = FALSE;
 	}
 
-	if (pct == (int) target)
+	reference = ramp_target >= 0 ? ramp_target : applied;
+
+	if (ABS (pct - reference) < DEADBAND) {
+		/* small wobble around the current level: leave the panel alone */
+		cancel_settle ();
 		return;
+	}
 
-	g_message ("lux %.2f -> %d%% (was %.0f%%, applied %d%%)",
-		   lux, pct, target, applied);
+	pending_pct = pct;
 
-	/*
-	 * Never re-read the panel here: gsd reports its own lagging value, so
-	 * during a fade it hands back a level from tens of steps ago and every
-	 * sensor event would yank the ramp back to it - that is the up/down
-	 * jumping seen on both brighten and dim.  `current` is the ramp state;
-	 * external changes are picked up by check_external() instead.
-	 */
-	if (current < 0.0)
-		current = pct;	/* unknown level: no fade-in */
+	if (settle_source)
+		g_source_remove (settle_source);
 
-	target = pct;
+	settle_source = g_timeout_add (SETTLE_MS, settle_done, NULL);
 }
 
 static void
@@ -466,10 +580,10 @@ int
 main (int argc, char **argv)
 {
 	GMainLoop *loop;
+	GError *error = NULL;
 
 	(void) argc;
 	(void) argv;
-	GError *error = NULL;
 
 	system_bus = g_bus_get_sync (G_BUS_TYPE_SYSTEM, NULL, &error);
 	if (!system_bus) {
@@ -517,7 +631,6 @@ main (int argc, char **argv)
 
 	g_signal_connect (sensor_proxy, "g-properties-changed",
 			  G_CALLBACK (sensor_properties_changed), NULL);
-	g_timeout_add (CHECK_MS, check_external, NULL);
 
 	/* gsd restores its stored brightness on resume, so take over again as
 	 * soon as logind reports that the system is awake. */
@@ -528,12 +641,15 @@ main (int argc, char **argv)
 					    G_DBUS_SIGNAL_FLAGS_NONE,
 					    logind_prepare_for_sleep, NULL, NULL);
 
+	disable_gsd_ambient ();
+
+	g_timeout_add (CHECK_MS, check_external, NULL);
+	g_timeout_add_seconds (RECLAIM_SECONDS, reclaim, NULL);
+
 	read_light_level ();
-	g_timeout_add (TICK_MS, tick, NULL);
 	/* First reading a moment later: the sensor is only opened after the
 	 * claim, and without an event the curve would not be applied at all. */
 	g_timeout_add (1500, reclaim_once, NULL);
-	g_timeout_add_seconds (30, reclaim, NULL);
 
 	loop = g_main_loop_new (NULL, FALSE);
 	g_main_loop_run (loop);
