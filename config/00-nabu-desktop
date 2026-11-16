@@ -18,8 +18,12 @@
 # fixed lux -> backlight curve and applies it through gsd.  GNOME's own
 # "relative to the last manual brightness" mapping is switched off, otherwise
 # the two fight and a large ambient swing leaves the panel too dark.
-ambient-enabled=false
+# Automatic brightness is gsd's own: the SSC stack exports the ambient light
+# sensor with the standard net.hadess.SensorProxy interface (lux), so the
+# desktop handles it like on any laptop.
+ambient-enabled=true
 sleep-inactive-ac-type='suspend'
 sleep-inactive-battery-type='suspend'
 sleep-inactive-ac-timeout=900
 sleep-inactive-battery-timeout=900
+

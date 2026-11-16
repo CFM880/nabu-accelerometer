@@ -122,27 +122,11 @@ install -D -m 0755 "$iio_build/src/iio-sensor-proxy" \
 install -D -m 0644 "$iio_build/data/net.hadess.SensorProxy.conf" \
 	"$stage/usr/local/share/dbus-1/system.d/net.hadess.SensorProxy.conf"
 
-# --- nabu-autobrightness ---
-# Small GIO daemon that maps the ambient light sensor to a fixed brightness
-# curve and applies it through gnome-settings-daemon (see the source header).
-if [ -n "${pkgconfig_libdir:-}" ]; then
-	ab_cflags=$(PKG_CONFIG_LIBDIR=$pkgconfig_libdir pkg-config --cflags gio-2.0)
-	ab_libs=$(PKG_CONFIG_LIBDIR=$pkgconfig_libdir pkg-config --libs gio-2.0)
-else
-	ab_cflags=$(pkg-config --cflags gio-2.0)
-	ab_libs=$(pkg-config --libs gio-2.0)
-fi
-install -d -m 0755 "$stage/usr/local/libexec"
-# shellcheck disable=SC2086
-"${cross}gcc" -O2 -Wall -Wextra -o "$stage/usr/local/libexec/nabu-autobrightness" \
-	"$module_dir/userspace/nabu-autobrightness.c" $ab_cflags $ab_libs -lm
-
 # --- verify and declare staged files ---
 for rel in \
 	usr/local/bin/ssccli \
 	usr/local/lib/libssc.so.2 \
 	usr/local/libexec/iio-sensor-proxy \
-	usr/local/libexec/nabu-autobrightness \
 	usr/local/share/dbus-1/system.d/net.hadess.SensorProxy.conf; do
 	[ -s "$stage/$rel" ] || die "staged userspace file missing: $stage/$rel"
 done

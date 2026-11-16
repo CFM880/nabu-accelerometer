@@ -9,11 +9,9 @@ requires    = []
 overlay      = "kernel-overlay"
 dtsi         = ["arch/arm64/boot/dts/qcom/sm8150-xiaomi-nabu-accelerometer-slpi-boot-only.dtsi"]
 config       = ["config/nabu-accelerometer.config"]
-systemd      = ["config/nabu-tablet-mode.service", "config/nabu-sensors-suspend.service", "config/nabu-sensors-resume.service", "config/nabu-autobrightness.service"]
+systemd      = ["config/nabu-tablet-mode.service", "config/nabu-sensors-suspend.service", "config/nabu-sensors-resume.service"]
 modules_load = ["config/nabu-slpi-hexagonrpcd.conf", "config/nabu-ssc-iio-sensor-proxy.conf"]
 rules        = ["config/90-nabu-ssc-accelerometer.rules"]
-# polkit: let the auto-brightness user service claim the light sensor
-polkit       = ["config/50-nabu-autobrightness.rules"]
 userspace    = ["userspace/nabu-tablet-mode.c", "userspace/nabu-light-filter.h"]
 
 [build]
@@ -36,11 +34,7 @@ install = "scripts/nabu-install.sh"
 "libssc.so.2"                 = "module:out/userspace/root/usr/local/lib/libssc.so.2"
 "iio-sensor-proxy-ssc"        = "module:out/userspace/root/usr/local/libexec/iio-sensor-proxy"
 "net.hadess.SensorProxy.conf" = "module:out/userspace/root/usr/local/share/dbus-1/system.d/net.hadess.SensorProxy.conf"
-"nabu-autobrightness"         = "module:out/userspace/root/usr/local/libexec/nabu-autobrightness"
 
 [install]
-# Fixed-curve auto-brightness: user unit, started with the graphical session.
-"config/nabu-autobrightness.service" = "/etc/systemd/user/nabu-autobrightness.service"
-"config/50-nabu-autobrightness.rules" = "/etc/polkit-1/rules.d/50-nabu-autobrightness.rules"
 "fastrpc.ko"        = "/lib/modules/@release@/kernel/drivers/misc/fastrpc.ko"
 "qcom_pd_mapper.ko" = "/lib/modules/@release@/kernel/drivers/soc/qcom/qcom_pd_mapper.ko"

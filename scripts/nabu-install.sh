@@ -36,10 +36,6 @@ require_artifact()
 
 "$libexec_dir/install-tablet-mode.sh" "$(require_artifact nabu-tablet-mode)"
 
-"$libexec_dir/install-autobrightness.sh" \
-	"$(require_artifact nabu-autobrightness)" \
-	"$project_dir/config/nabu-autobrightness.service"
-
 "$libexec_dir/install-sensors-sleep.sh"
 
 echo "installed the Nabu userspace sensor stack"
