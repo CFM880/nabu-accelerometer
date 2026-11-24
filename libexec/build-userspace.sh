@@ -90,6 +90,7 @@ libssc_build=$build_root/libssc/build
 install -d -m 0755 "$libssc_src"
 tar -xzf "$libssc_archive" --strip-components=1 -C "$libssc_src"
 patch --batch --fuzz=0 -d "$libssc_src" -p1 < "$module_dir/patches/0004-libssc-skip-mocking.patch"
+patch --batch --fuzz=0 -d "$libssc_src" -p1 < "$module_dir/patches/0006-libssc-blocking-sync-wait.patch"
 # shellcheck disable=SC2086
 meson setup "$libssc_build" "$libssc_src" \
 	$meson_cross --prefix="$stage/usr/local" --libdir=lib --buildtype=release

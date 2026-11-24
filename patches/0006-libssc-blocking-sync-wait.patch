@@ -1,0 +1,24 @@
+diff --git a/src/libssc-common.c b/src/libssc-common.c
+index 3648f47..00ae88b 100644
+--- a/src/libssc-common.c
++++ b/src/libssc-common.c
+@@ -50,10 +50,18 @@ ssc_common_init_sync_context (SyncContext *ctx) {
+ 
+ void
+ ssc_common_wait_sync_context (SyncContext *ctx) {
++	/*
++	 * Nabu: iterate the context with may_block=TRUE.  With FALSE the call
++	 * returns immediately when no event is pending, so a request that never
++	 * completes (observed with ssc_sensor_light_open_sync() on this board:
++	 * the light sensor keeps streaming but the open reply never arrives)
++	 * spins the calling thread at 100% CPU forever.  Blocking keeps the same
++	 * event pumping without burning the CPU.
++	 */
+ 	g_mutex_lock (&ctx->mutex);
+ 	while (!ctx->finished) {
+ 		g_mutex_unlock (&ctx->mutex);
+-		g_main_context_iteration (g_main_context_default (), FALSE);
++		g_main_context_iteration (g_main_context_default (), TRUE);
+ 		g_mutex_lock (&ctx->mutex);
+ 	}
+ 	g_mutex_unlock (&ctx->mutex);
